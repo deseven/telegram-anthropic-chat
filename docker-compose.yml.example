@@ -1,0 +1,15 @@
+services:
+  bot:
+    build: .
+    image: telegram-anthropic-chat
+    container_name: telegram-anthropic-chat
+    restart: unless-stopped
+    stop_grace_period: 60s
+    working_dir: /app
+    volumes:
+      # Mount the project dir so config.json, prompts/ and data/ are live on the host.
+      - ./:/app
+    command: ["-config", "config.jsonc"]
+    # Expose the webhook port if you use webhook mode.
+    #ports:
+    #  - "127.0.0.1:5666:5666"

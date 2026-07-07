@@ -1,0 +1,26 @@
+# Binaries
+/bin/
+*.exe
+
+# Local config & runtime data
+config.jsonc
+/data/*
+!data/123456789.json.example
+/prompts/*
+!/prompts/system.md
+!/prompts/memories-system.md
+!/prompts/memories-user.md
+*.log
+
+# Backups
+*.backup
+
+# Go
+/vendor/
+
+# Editor / OS
+docs/
+.DS_Store
+.idea/
+.vscode/
+*.swp

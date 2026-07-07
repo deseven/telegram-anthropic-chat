@@ -1,0 +1,51 @@
+{
+  // Anthropic API key (required)
+  "apiKey": "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx",
+
+  // Telegram bot token from BotFather (required)
+  "botToken": "123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+
+  // How the bot receives updates: "polling" (default) or "webhook"
+  "botUpdateMethod": "polling",
+
+  // Anthropic model to use for chat (optional, default: claude-sonnet-5)
+  "model": "claude-sonnet-5",
+
+  // Max tokens for chat responses (optional, default: 16384)
+  "maxTokens": 16384,
+
+  // How many characters of memories to push into the context (optional, default: 16384)
+  "memoriesCtxSize": 16384,
+
+  // Seconds of inactivity after which a session is considered ended and memories are extracted (optional, default: 3600)
+  "sessionTimeout": 3600,
+
+  // Path to the system prompt for user chat (optional, default: prompts/system.md)
+  "systemPrompt": "prompts/system.md",
+
+  // Path to the system prompt used when extracting memories (optional, default: prompts/memories-system.md)
+  "memoriesPrompt": "prompts/memories-system.md",
+
+  // Path to the user prompt used when extracting memories (optional, default: prompts/memories-user.md)
+  "memoriesUserPrompt": "prompts/memories-user.md",
+
+  // --- Webhook-only settings (ignored in polling mode) ---
+  // Port the HTTP server listens on (optional, default: 5666)
+  "webhookPort": 5666,
+  // Secret token Telegram sends in the X-Telegram-Bot-Api-Secret-Token header (optional but recommended)
+  "webhookSecretToken": "",
+
+  // Public HTTPS URL Telegram will call, used for SetWebhook (optional; if empty, SetWebhook is skipped)
+  "webhookPublicURL": "",
+
+  // Path to a file where every Anthropic API request and response (chat and
+  // memory extraction) will be dumped for debugging. Optional, default: empty
+  // (disabled). The file is truncated on each app start.
+  "dumpRequestsPath": "",
+
+  // Tavily API key for web search / URL extraction tool calling (optional,
+  // default: empty). When set, the bot offers the model two tools —
+  // web_search and extract_url — which it can use to look up current
+  // information. When empty, tool calling is disabled entirely.
+  "tavilyApiKey": ""
+}
