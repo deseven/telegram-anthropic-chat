@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zoo/telegram-anthropic-chat/internal/storage"
 )
@@ -124,17 +125,19 @@ func Render(memories []storage.Memory) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// RenderList renders a slice of memories as a newline-separated list where
-// each line is prefixed with the memory id in the form "#id: text". This is
-// intended for user-facing displays (e.g. the /mem command) where the id is
-// needed to refer to a memory. Returns an empty string for an empty slice.
+// RenderList renders a slice of memories as a Markdown list intended for
+// user-facing displays (e.g. the /mem command). Each memory is shown on its own
+// line as a bold id, the creation date (YYYY-MM-DD, UTC) in parentheses, and the
+// memory text. The output is meant to be sent through the MarkdownV2 converter.
+// Returns an empty string for an empty slice.
 func RenderList(memories []storage.Memory) string {
 	if len(memories) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	for _, m := range memories {
-		fmt.Fprintf(&b, "#%d: %s\n", m.ID, m.Text)
+		date := time.Unix(m.Date, 0).UTC().Format("2006-01-02")
+		fmt.Fprintf(&b, "**#%d** (%s) %s\n", m.ID, date, m.Text)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

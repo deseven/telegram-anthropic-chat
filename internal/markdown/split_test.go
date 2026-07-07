@@ -105,3 +105,50 @@ func TestSplitMarkdownLimitSmall(t *testing.T) {
 		}
 	}
 }
+
+// TestSplitPlainTextFits asserts that every chunk returned by SplitPlainText is
+// within the message cap and that content is preserved (no characters dropped
+// except the joining newlines that are re-added when concatenating with "\n").
+func TestSplitPlainTextFits(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"short text unchanged", "Hello! Price is 5$ + tax."},
+		{"long plain text", strings.Repeat("The quick brown fox jumps over the lazy dog. ", 200)},
+		{"long single line no newlines", strings.Repeat("word ", 2000)},
+		{"many short lines", strings.Repeat("mem line\n", 800)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks := SplitPlainText(tc.in)
+			if len(chunks) == 0 {
+				t.Fatalf("SplitPlainText returned no chunks for non-empty input")
+			}
+			for i, c := range chunks {
+				if l := len([]rune(c)); l > MaxMessageLen {
+					t.Errorf("chunk %d length %d exceeds %d", i, l, MaxMessageLen)
+				}
+			}
+			// No actual content characters may be dropped: only newlines are
+			// inserted/dropped at chunk boundaries (line-boundary splits drop a
+			// joining newline; hard-splits of over-long lines insert one). So
+			// stripping newlines from both sides must yield identical text.
+			got := strings.ReplaceAll(strings.Join(chunks, "\n"), "\n", "")
+			want := strings.ReplaceAll(tc.in, "\n", "")
+			if got != want {
+				t.Errorf("content mismatch (newlines stripped):\n got len %d\nwant len %d", len(got), len(want))
+			}
+		})
+	}
+}
+
+// TestSplitPlainTextEmpty asserts that empty/whitespace-only input yields nil.
+func TestSplitPlainTextEmpty(t *testing.T) {
+	if got := SplitPlainText(""); got != nil {
+		t.Fatalf("expected nil for empty input, got %v", got)
+	}
+	if got := SplitPlainText("   \n  "); got != nil {
+		t.Fatalf("expected nil for whitespace-only input, got %v", got)
+	}
+}

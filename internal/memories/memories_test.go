@@ -132,12 +132,14 @@ func TestRenderListEmpty(t *testing.T) {
 }
 
 func TestRenderListWithIDs(t *testing.T) {
+	const ts = 1752019200 // 2025-07-09 00:00:00 UTC
 	ms := []storage.Memory{
-		{ID: 7, Text: "alpha"},
-		{ID: 42, Text: "beta"},
+		{ID: 7, Text: "alpha", Date: ts},
+		{ID: 42, Text: "beta", Date: ts},
 	}
-	if out := RenderList(ms); out != "#7: alpha\n#42: beta" {
-		t.Fatalf("expected id-prefixed list, got %q", out)
+	want := "**#7** (2025-07-09) alpha\n**#42** (2025-07-09) beta"
+	if out := RenderList(ms); out != want {
+		t.Fatalf("expected id+date list, got %q", out)
 	}
 }
 

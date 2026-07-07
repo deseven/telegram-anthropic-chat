@@ -1,6 +1,11 @@
 package storage
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestDeleteMemory(t *testing.T) {
 	ud := &UserData{
@@ -66,5 +71,66 @@ func TestNextMemoryIDAfterDelete(t *testing.T) {
 	ud.DeleteMemory(1)
 	if got := ud.NextMemoryID(); got != 6 {
 		t.Fatalf("NextMemoryID = %d, want 6 (max unchanged)", got)
+	}
+}
+
+// TestAddMemoriesStampsDate asserts that AddMemories stamps every new memory
+// with a non-zero creation timestamp (and leaves an explicit date untouched).
+func TestAddMemoriesStampsDate(t *testing.T) {
+	ud := &UserData{UserDescription: "desc"}
+	in := []Memory{
+		{Importance: 5, Text: "auto date"},
+		{Importance: 3, Text: "explicit date", Date: 1000},
+	}
+	ud.AddMemories(in, "session-uuid")
+
+	if ud.Memories[0].Date == 0 {
+		t.Fatal("expected auto-stamped date to be non-zero")
+	}
+	// The explicit date must be preserved, not overwritten.
+	if ud.Memories[1].Date != 1000 {
+		t.Fatalf("expected explicit date 1000 to be preserved, got %d", ud.Memories[1].Date)
+	}
+	// The stamped date should be recent (within the last minute).
+	now := time.Now().UTC().Unix()
+	if d := ud.Memories[0].Date; d < now-60 || d > now+60 {
+		t.Fatalf("stamped date %d not within ~now (%d)", d, now)
+	}
+}
+
+// TestLoadBackfillsMissingDate asserts that memories loaded from disk without a
+// date are backfilled with the start of today (UTC), while memories that already
+// carry a date keep it.
+func TestLoadBackfillsMissingDate(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A data file with two memories: one without a date, one with an explicit
+	// date. This mirrors the pre-date on-disk format for the first memory.
+	raw := `{
+		"user_description": "desc",
+		"memories": [
+			{"id": 1, "importance": 5, "text": "no date"},
+			{"id": 2, "importance": 3, "text": "has date", "date": 1000}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "1.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ud, err := s.Load(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The memory without a date is backfilled to the start of today.
+	startOfToday := time.Now().UTC().Truncate(24 * time.Hour).Unix()
+	if ud.Memories[0].Date != startOfToday {
+		t.Fatalf("missing date backfilled to %d, want %d (start of today)", ud.Memories[0].Date, startOfToday)
+	}
+	// The explicit date is preserved.
+	if ud.Memories[1].Date != 1000 {
+		t.Fatalf("explicit date changed to %d, want 1000", ud.Memories[1].Date)
 	}
 }

@@ -115,19 +115,19 @@ func (a *App) cmdMem(ctx context.Context, chatID int64, sess *session, text stri
 		sb.WriteString("You have no memories yet.")
 	} else {
 		if r := memories.RenderList(in); r != "" {
-			sb.WriteString("=== Current context ===\n")
+			sb.WriteString("**Current context:**\n")
 			sb.WriteString(r)
 		}
 		if len(out) > 0 {
 			if sb.Len() > 0 {
 				sb.WriteString("\n\n")
 			}
-			sb.WriteString("=== Other memories ===\n")
+			sb.WriteString("**Other memories:**\n")
 			sb.WriteString(memories.RenderList(out))
 		}
 	}
 
-	a.sendText(ctx, chatID, sb.String())
+	a.sendMarkdown(ctx, chatID, sb.String())
 }
 
 // cmdMemDel deletes one or more memories by id and persists the change. It

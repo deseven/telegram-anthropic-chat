@@ -29,6 +29,7 @@ type Memory struct {
 	ID          int    `json:"id"`
 	Importance  int    `json:"importance"` // 1-10
 	Text        string `json:"text"`
+	Date        int64  `json:"date"` // creation time as a Unix timestamp (seconds, UTC)
 }
 
 // UserData is the on-disk representation of a user's state.
@@ -71,6 +72,15 @@ func (s *Store) Load(userID int64) (*UserData, error) {
 	if ud.UserDescription == "" {
 		return nil, fmt.Errorf("user data %d: user_description is required", userID)
 	}
+	// Backwards compatibility: memories written before the Date field existed
+	// have a zero date. Stamp them with the start of today (UTC) so every
+	// memory carries a creation time.
+	today := time.Now().UTC().Truncate(24 * time.Hour).Unix()
+	for i := range ud.Memories {
+		if ud.Memories[i].Date == 0 {
+			ud.Memories[i].Date = today
+		}
+	}
 	return &ud, nil
 }
 
@@ -107,8 +117,9 @@ func (ud *UserData) NextMemoryID() int {
 }
 
 // AddMemories appends new memories, tagging each with the session UUID it was
-// extracted from and assigning a monotonic ID.
+// extracted from, assigning a monotonic ID, and stamping the creation time.
 func (ud *UserData) AddMemories(in []Memory, sessionUUID string) {
+	now := time.Now().UTC().Unix()
 	for _, m := range in {
 		m.SessionUUID = sessionUUID
 		m.ID = ud.NextMemoryID()
@@ -117,6 +128,9 @@ func (ud *UserData) AddMemories(in []Memory, sessionUUID string) {
 		}
 		if m.Importance > 10 {
 			m.Importance = 10
+		}
+		if m.Date == 0 {
+			m.Date = now
 		}
 		ud.Memories = append(ud.Memories, m)
 	}

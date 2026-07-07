@@ -603,14 +603,23 @@ func (a *App) FlushAll(ctx context.Context) {
 	log.Print("app", "FlushAll: done")
 }
 
-// sendText sends a plain (unparsed) text message.
+// sendText sends a plain (unparsed) text message. If the text is too long for a
+// single Telegram message (4096 chars), it is split into multiple chunks that
+// are sent sequentially so the user still receives the whole text.
 func (a *App) sendText(ctx context.Context, chatID int64, text string) {
-	_, err := a.tgbot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   text,
-	})
-	if err != nil {
-		log.Print("app", "send message to %d failed: %v", chatID, err)
+	chunks := markdown.SplitPlainText(text)
+	if len(chunks) == 0 {
+		chunks = []string{text}
+	}
+	for _, chunk := range chunks {
+		_, err := a.tgbot.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: chatID,
+			Text:   chunk,
+		})
+		if err != nil {
+			log.Print("app", "send message to %d failed: %v", chatID, err)
+			return
+		}
 	}
 }
 

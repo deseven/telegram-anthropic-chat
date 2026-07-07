@@ -95,17 +95,17 @@ func TestToMarkdownV2(t *testing.T) {
 		{
 			name: "ordered list keeps numbering",
 			in:   "1. something\n2. something else",
-			want: "\n1\u200B\\. something\n\n2\u200B\\. something else\n",
+			want: "\n1\\. something\n\n2\\. something else\n",
 		},
 		{
 			name: "ordered list three items",
 			in:   "1. first\n2. second\n3. third",
-			want: "\n1\u200B\\. first\n\n2\u200B\\. second\n\n3\u200B\\. third\n",
+			want: "\n1\\. first\n\n2\\. second\n\n3\\. third\n",
 		},
 		{
 			name: "ordered list separated from text",
 			in:   "intro\n1. one\n2. two\noutro",
-			want: "\nintro\n\n1\u200B\\. one\n\n2\u200B\\. two\n\noutro\n",
+			want: "\nintro\n\n1\\. one\n\n2\\. two\n\noutro\n",
 		},
 		{
 			name: "unordered list still bulleted",

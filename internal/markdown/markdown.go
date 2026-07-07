@@ -30,7 +30,12 @@ func ToMarkdownV2(s string) string {
 		// the original text so the caller's plain-text fallback applies.
 		return s
 	}
-	return buf.String()
+	// The zero-width space inserted by preprocessOrderedLists is only needed
+	// to keep goldmark from recognising ordered-list markers during rendering.
+	// Once conversion is done it has served its purpose, so we strip it: it is
+	// invisible to the reader but would otherwise leak into the final Telegram
+	// message text (e.g. when a user copies the message).
+	return strings.ReplaceAll(buf.String(), zeroWidthSpace, "")
 }
 
 // orderedItemRe matches a line that begins an ordered (numbered) list item,
@@ -238,4 +243,66 @@ func splitHard(line string, limit int) []string {
 	}
 	parts = append(parts, rest)
 	return parts
+}
+
+// SplitPlainText splits plain (unparsed) text into chunks each no longer than
+// limit runes, preferring to break at line boundaries. Single lines that exceed
+// the limit on their own are hard-split, preferring word boundaries. It is the
+// plain-text counterpart to SplitMarkdown, for messages sent without MarkdownV2
+// parsing (e.g. command replies such as /mem) that may still exceed Telegram's
+// 4096-character message cap.
+//
+// An empty or whitespace-only input returns nil.
+func SplitPlainText(text string) []string {
+	return splitPlainText(text, MaxMessageLen)
+}
+
+func splitPlainText(text string, limit int) []string {
+	if limit <= 0 {
+		limit = MaxMessageLen
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if len([]rune(text)) <= limit {
+		return []string{text}
+	}
+
+	lines := strings.Split(text, "\n")
+	var chunks []string
+	var buf strings.Builder
+
+	flush := func() {
+		s := buf.String()
+		buf.Reset()
+		if s != "" {
+			chunks = append(chunks, s)
+		}
+	}
+
+	for _, line := range lines {
+		// A line plus the joining newline must fit; if the line alone exceeds
+		// the limit, hard-split it so we always make progress.
+		if len([]rune(line)) > limit {
+			flush()
+			for _, p := range splitHard(line, limit) {
+				chunks = append(chunks, p)
+			}
+			continue
+		}
+		candidate := buf.String()
+		if buf.Len() > 0 {
+			candidate += "\n"
+		}
+		candidate += line
+		if len([]rune(candidate)) > limit {
+			flush()
+			buf.WriteString(line)
+		} else {
+			buf.Reset()
+			buf.WriteString(candidate)
+		}
+	}
+	flush()
+	return chunks
 }
