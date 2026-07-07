@@ -2,7 +2,7 @@
 //
 // Supported variables:
 //   - {user_description}
-//   - {now}            (yyyy-mm-dd hh:ii)
+//   - {now}            (Monday, 02 Jan 2006 15:04)
 //   - {memories}       (rendered memory list)
 //   - {history}        (JSON array of session messages)
 package prompt
@@ -27,7 +27,7 @@ func Load(path string) (string, error) {
 func Render(tmpl, userDescription, memories string, now time.Time) string {
 	r := strings.NewReplacer(
 		"{user_description}", userDescription,
-		"{now}", now.Format("02 Jan 2006 15:04"),
+		"{now}", now.Format("Monday, 02 Jan 2006 15:04"),
 		"{memories}", memories,
 	)
 	return r.Replace(tmpl)
@@ -37,7 +37,7 @@ func Render(tmpl, userDescription, memories string, now time.Time) string {
 func RenderWithHistory(tmpl, userDescription, memories, history string, now time.Time) string {
 	r := strings.NewReplacer(
 		"{user_description}", userDescription,
-		"{now}", now.Format("02 Jan 2006 15:04"),
+		"{now}", now.Format("Monday, 02 Jan 2006 15:04"),
 		"{memories}", memories,
 		"{history}", history,
 	)

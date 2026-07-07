@@ -11,7 +11,7 @@ func TestRender_NowFormat(t *testing.T) {
 	now := time.Date(2006, time.January, 2, 15, 4, 5, 0, time.UTC)
 
 	got := Render("{now}", "", "", now)
-	want := "02 Jan 2006 15:04"
+	want := "Monday, 02 Jan 2006 15:04"
 	if got != want {
 		t.Fatalf("Render({now}) = %q, want %q", got, want)
 	}
@@ -21,7 +21,7 @@ func TestRenderWithHistory_NowFormat(t *testing.T) {
 	now := time.Date(2006, time.January, 2, 15, 4, 5, 0, time.UTC)
 
 	got := RenderWithHistory("{now}", "", "", "", now)
-	want := "02 Jan 2006 15:04"
+	want := "Monday, 02 Jan 2006 15:04"
 	if got != want {
 		t.Fatalf("RenderWithHistory({now}) = %q, want %q", got, want)
 	}
@@ -34,7 +34,7 @@ func TestRender_NowFormat_NonReferenceYear(t *testing.T) {
 	now := time.Date(2026, time.July, 6, 15, 9, 0, 0, time.UTC)
 
 	got := Render("{now}", "", "", now)
-	want := "06 Jul 2026 15:09"
+	want := "Monday, 06 Jul 2026 15:09"
 	if got != want {
 		t.Fatalf("Render({now}) = %q, want %q (regression: year token)", got, want)
 	}

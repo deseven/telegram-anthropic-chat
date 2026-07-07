@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
 # Rebuild and restart the telegram-anthropic-chat container, then attach to logs.
+# Image and container names are read from docker-compose.yml, not hardcoded here.
 set -euo pipefail
 
-IMAGE="telegram-anthropic-chat"
-CONTAINER="telegram-anthropic-chat"
+echo "==> Reading image name from docker-compose.yml..."
+IMAGE="$(docker compose config --images | head -n1)"
 
-echo "==> Stopping docker compose services..."
-docker compose stop
-
-echo "==> Removing existing container (if any)..."
-if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER}"; then
-  docker rm -f "${CONTAINER}"
-fi
+echo "==> Stopping and removing existing compose containers..."
+docker compose down --remove-orphans
 
 echo "==> Removing existing image (if any)..."
-if docker images -q "${IMAGE}" | grep -q .; then
+if [ -n "${IMAGE}" ] && docker images -q "${IMAGE}" | grep -q .; then
   docker rmi -f "${IMAGE}"
 fi
 
