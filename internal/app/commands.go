@@ -46,10 +46,12 @@ func (a *App) handleCommand(ctx context.Context, chatID int64, userID int64, tex
 		a.submit(func() { a.cmdMem(context.Background(), chatID, sess, text) })
 	case "end":
 		a.submit(func() { a.cmdEnd(context.Background(), chatID, sess) })
+	case "forget":
+		a.submit(func() { a.cmdForget(context.Background(), chatID, sess) })
 	case "rld", "reload":
 		a.submit(func() { a.cmdReload(context.Background(), chatID, sess) })
 	default:
-		a.sendText(ctx, chatID, "Unknown command. Available commands:\n/mem — show your memories\n/mem del {id} [{id} ...] — delete one or more memories by id\n/end — end the current session and extract memories\n/rld — reload your data (description and memories) from disk")
+		a.sendText(ctx, chatID, "Unknown command. Available commands:\n/mem — show your memories\n/mem del {id} [{id} ...] — delete one or more memories by id\n/end — end the current session and extract memories\n/forget — end the current session without extracting memories\n/rld — reload your data (description and memories) from disk")
 	}
 	return true
 }
@@ -192,6 +194,26 @@ func (a *App) cmdEnd(ctx context.Context, chatID int64, sess *session) {
 		msg = fmt.Sprintf("Session ended. %d new memor%s extracted and saved.", added, pluralMemory(added))
 	}
 	a.sendText(ctx, chatID, msg)
+}
+
+// cmdForget ends the user's current session without extracting memories: it
+// simply clears the in-memory conversation context. No Anthropic API call is
+// made and no session UUID is recorded. The command itself is never added to
+// the LLM context.
+func (a *App) cmdForget(ctx context.Context, chatID int64, sess *session) {
+	// Stop the session-timeout timer: the user is ending the session
+	// explicitly, so there is no need for a later automatic extraction.
+	if sess.timer != nil {
+		sess.timer.Stop()
+		sess.timer = nil
+	}
+
+	// Clear in-memory context; next message starts a fresh session. No
+	// memory extraction, no session UUID, no persistence.
+	sess.ctx = nil
+	sess.uuid = ""
+
+	a.sendText(ctx, chatID, "Session ended. No memories were extracted.")
 }
 
 // pluralMemory returns "y" for 1, "ies" otherwise (to form "memory"/"memories").

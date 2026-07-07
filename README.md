@@ -33,6 +33,7 @@ context. Unknown commands print a short help.
   rest, each prefixed with its id.
 - `/mem del {id} [{id} ...]` — delete one or more memories by id.
 - `/end` — end the current session and extract memories immediately.
+- `/forget` — end the current session without extracting memories.
 - `/rld` — reload your data (description and memories) from disk; the in-memory
   conversation is preserved.
 
