@@ -11,6 +11,7 @@ config.jsonc
 !/prompts/memories-system.md
 !/prompts/memories-user.md
 *.log
+*.yml
 
 # Backups
 *.backup
