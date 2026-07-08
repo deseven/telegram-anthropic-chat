@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zoo/telegram-anthropic-chat/internal/log"
 	"github.com/zoo/telegram-anthropic-chat/internal/memories"
@@ -213,6 +214,7 @@ func (a *App) cmdForget(ctx context.Context, chatID int64, sess *session) {
 	// memory extraction, no session UUID, no persistence.
 	sess.ctx = nil
 	sess.uuid = ""
+	sess.sessionStart = time.Time{}
 
 	a.sendText(ctx, chatID, "Session ended. No memories were extracted.")
 }

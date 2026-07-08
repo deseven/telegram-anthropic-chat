@@ -71,6 +71,12 @@ type session struct {
 	ctx    []llm.Message // in-memory conversation context (current session)
 	uuid   string        // UUID of the current chat session; assigned on first message, used to tag extracted memories
 
+	// sessionStart is the time captured when the session began. It is used
+	// to substitute {now} in prompts so the value stays constant across all
+	// turns of the session, avoiding prompt-cache invalidation that would
+	// occur if the time changed on every request.
+	sessionStart time.Time
+
 	// inbox collects incoming messages until the debounce fires.
 	inbox []incomingMsg
 
@@ -259,9 +265,18 @@ func (a *App) handleBatch(batch []incomingMsg, s *session) {
 	chatID := batch[0].chatID
 
 	// A new session starts when the in-memory context is empty: assign a
-	// fresh UUID so memories extracted from this session can be tagged.
+	// fresh UUID so memories extracted from this session can be tagged, and
+	// capture the session start time. The start time is reused for {now}
+	// substitutions across all turns of the session so the system prompt
+	// stays byte-identical (preserving prompt-cache hits).
 	if len(s.ctx) == 0 && s.uuid == "" {
 		s.uuid = uuid.NewString()
+		s.sessionStart = time.Now()
+	}
+	now := s.sessionStart
+	if now.IsZero() {
+		// Defensive: should not happen, but never pass a zero time to Render.
+		now = time.Now()
 	}
 
 	// Build content blocks for each message, joining individual messages with a
@@ -290,8 +305,8 @@ func (a *App) handleBatch(batch []incomingMsg, s *session) {
 	// Append the combined user message to in-memory context.
 	s.ctx = append(s.ctx, llm.Message{Role: "user", Blocks: blocks})
 
-	// Build system prompt with current memories.
-	now := time.Now()
+	// Build system prompt with current memories. `now` was captured at
+	// session start (see above) to keep the prompt stable across turns.
 	memList := memories.Select(s.data.Memories, a.cfg.MemoriesCtxSize, s.data.Sessions)
 	system := prompt.Render(a.sysPromptTmpl, s.data.UserDescription, memList, now)
 
@@ -528,7 +543,12 @@ func (a *App) extractAndClear(ctx context.Context, s *session) (int, error) {
 
 	log.Print("app", "extracting memories for user %d (%d messages)", s.userID, len(ctxMsgs))
 
-	now := time.Now()
+	// Reuse the session start time for {now} so the memory-extraction
+	// prompt is consistent with the conversation that produced it.
+	now := s.sessionStart
+	if now.IsZero() {
+		now = time.Now()
+	}
 	memList := memories.Select(data.Memories, a.cfg.MemoriesCtxSize, data.Sessions)
 	history := llm.SerializeHistory(ctxMsgs)
 	system := prompt.Render(a.memoriesPromptTmpl, data.UserDescription, memList, now)
@@ -563,6 +583,7 @@ func (a *App) extractAndClear(ctx context.Context, s *session) (int, error) {
 	// Clear in-memory context; next message starts a fresh session.
 	s.ctx = nil
 	s.uuid = ""
+	s.sessionStart = time.Time{}
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
