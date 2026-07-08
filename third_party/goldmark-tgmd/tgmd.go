@@ -84,7 +84,24 @@ func (r *Renderer) paragraph(w util.BufWriter, _ []byte, node ast.Node, entering
 ) {
 	n := node.(*ast.Paragraph)
 	if entering {
-		if n.Parent().Kind().String() != ast.KindBlockquote.String() {
+		parent := n.Parent()
+		if parent.Kind().String() == ast.KindListItem.String() {
+			// A paragraph that is the direct content of a list item must not
+			// emit a leading newline: the item has already written its marker
+			// (e.g. "  1. ") and the text has to follow on the same line.
+			// A leading newline here would split the marker from its content,
+			// rendering as "1.\ncontent" with a spurious blank line.
+			//
+			// For a subsequent paragraph in the same (multi-paragraph) item,
+			// start on a new line aligned under the item's text via the
+			// content-indent on top of the list-indent stack.
+			if n.PreviousSibling() != nil {
+				writeNewLine(w)
+				if len(r.listIndentStack) > 0 {
+					writeRowBytes(w, r.listIndentStack[len(r.listIndentStack)-1])
+				}
+			}
+		} else if parent.Kind().String() != ast.KindBlockquote.String() {
 			writeNewLine(w)
 		}
 	} else {

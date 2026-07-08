@@ -145,6 +145,27 @@ func TestToMarkdownV2(t *testing.T) {
 				"  3\\. Final point\n" +
 				"     Single continuation line\n",
 		},
+		{
+			// A "loose" list (blank lines between items) wraps each item's
+			// content in a Paragraph node. The marker must stay on the same
+			// line as the content (no spurious newline after "1.").
+			name: "loose ordered list with bold keeps marker on content line",
+			in:   "Три варианта:\n\n1. **mod-llm-chatter** — модуль.\n\n2. **mod-playerbots** — боты.",
+			want: "\nТри варианта:\n\n  1\\. ***mod\\-llm\\-chatter*** — модуль\\.\n\n  2\\. ***mod\\-playerbots*** — боты\\.\n\n",
+		},
+		{
+			// Loose unordered list: bullet stays on the same line as content.
+			name: "loose unordered list keeps bullet on content line",
+			in:   "- **first** item\n\n- **second** item",
+			want: "\n  • ***first*** item\n\n  • ***second*** item\n\n",
+		},
+		{
+			// A list item with multiple paragraphs: the second paragraph
+			// starts on a new line aligned under the item's text.
+			name: "loose list item with multiple paragraphs",
+			in:   "1. first para\n\n   second para\n\n2. next",
+			want: "\n  1\\. first para\n\n     second para\n\n  2\\. next\n\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
