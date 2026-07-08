@@ -125,11 +125,14 @@ func Render(memories []storage.Memory) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// RenderList renders a slice of memories as a Markdown list intended for
-// user-facing displays (e.g. the /mem command). Each memory is shown on its own
-// line as a bold id, the creation date (YYYY-MM-DD, UTC) in parentheses, and the
-// memory text. The output is meant to be sent through the MarkdownV2 converter.
-// Returns an empty string for an empty slice.
+// RenderList renders a slice of memories as Markdown intended for user-facing
+// displays (e.g. the /mem command). Each memory is shown as a bold id, the
+// creation date (YYYY-MM-DD, UTC) in parentheses, and the memory text. Every
+// line ends with two trailing spaces, which CommonMark treats as a hard line
+// break: this keeps the output compact (one line per memory) while preventing
+// consecutive non-blank lines from merging into a single paragraph. The output
+// is meant to be sent through the MarkdownV2 converter. Returns an empty string
+// for an empty slice.
 func RenderList(memories []storage.Memory) string {
 	if len(memories) == 0 {
 		return ""
@@ -137,7 +140,7 @@ func RenderList(memories []storage.Memory) string {
 	var b strings.Builder
 	for _, m := range memories {
 		date := time.Unix(m.Date, 0).UTC().Format("2006-01-02")
-		fmt.Fprintf(&b, "**#%d** (%s) %s\n", m.ID, date, m.Text)
+		fmt.Fprintf(&b, "**#%d** (%s) %s  \n", m.ID, date, m.Text)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), " \n")
 }

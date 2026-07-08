@@ -6,7 +6,6 @@ package markdown
 
 import (
 	"bytes"
-	"regexp"
 	"strings"
 
 	tgmd "github.com/Mad-Pixels/goldmark-tgmd"
@@ -24,74 +23,13 @@ const (
 func ToMarkdownV2(s string) string {
 	var buf bytes.Buffer
 	md := tgmd.TGMD()
-	if err := md.Convert([]byte(preprocessOrderedLists(s)), &buf); err != nil {
+	if err := md.Convert([]byte(s), &buf); err != nil {
 		// goldmark.Convert only returns an error from a renderer panic hook;
 		// in practice it never fails for valid input. If it ever does, return
 		// the original text so the caller's plain-text fallback applies.
 		return s
 	}
-	// The zero-width space inserted by preprocessOrderedLists is only needed
-	// to keep goldmark from recognising ordered-list markers during rendering.
-	// Once conversion is done it has served its purpose, so we strip it: it is
-	// invisible to the reader but would otherwise leak into the final Telegram
-	// message text (e.g. when a user copies the message).
-	return strings.ReplaceAll(buf.String(), zeroWidthSpace, "")
-}
-
-// orderedItemRe matches a line that begins an ordered (numbered) list item,
-// e.g. "1. " or "12. ".
-var orderedItemRe = regexp.MustCompile(`^(\d{1,9})\. `)
-
-// zeroWidthSpace is inserted between the number and the dot of an ordered-list
-// marker so goldmark no longer recognises the line as a list. It is invisible
-// to the reader but breaks the "digits + dot + space" pattern that CommonMark
-// uses to detect ordered lists.
-const zeroWidthSpace = "\u200B"
-
-// preprocessOrderedLists neutralises ordered-list markers so that the
-// goldmark-tgmd renderer does not mangle them. The library renders every list
-// (ordered or not) with bullet characters and places the bullet on its own
-// line, which turns:
-//
-//	1. something
-//	2. something else
-//
-// into:
-//
-//	  •
-//	something
-//	  •
-//	something else
-//
-// To avoid this we insert a zero-width space between the number and the dot of
-// each ordered-list marker so goldmark no longer parses the lines as a list,
-// and we surround each item with blank lines so it forms its own paragraph
-// (otherwise adjacent text would merge into the same paragraph). The visible
-// result keeps the original "1. text" numbering intact.
-func preprocessOrderedLists(s string) string {
-	lines := strings.Split(s, "\n")
-	var out []string
-	for i, line := range lines {
-		isItem := orderedItemRe.MatchString(line)
-		if isItem {
-			line = orderedItemRe.ReplaceAllString(line, "$1"+zeroWidthSpace+". ")
-		}
-		// Separate the item from a preceding non-blank line.
-		if isItem && len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
-			out = append(out, "")
-		}
-		// Separate the item from a following non-blank line that is not itself
-		// an ordered item, so trailing text doesn't merge into the paragraph.
-		if isItem && i < len(lines)-1 {
-			next := lines[i+1]
-			if strings.TrimSpace(next) != "" && !orderedItemRe.MatchString(next) {
-				out = append(out, line, "")
-				continue
-			}
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
+	return buf.String()
 }
 
 // convertedLen returns the rune length of the MarkdownV2 rendering of s. This

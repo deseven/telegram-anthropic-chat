@@ -95,22 +95,55 @@ func TestToMarkdownV2(t *testing.T) {
 		{
 			name: "ordered list keeps numbering",
 			in:   "1. something\n2. something else",
-			want: "\n1\\. something\n\n2\\. something else\n",
+			want: "\n  1\\. something\n  2\\. something else\n",
 		},
 		{
 			name: "ordered list three items",
 			in:   "1. first\n2. second\n3. third",
-			want: "\n1\\. first\n\n2\\. second\n\n3\\. third\n",
+			want: "\n  1\\. first\n  2\\. second\n  3\\. third\n",
 		},
 		{
 			name: "ordered list separated from text",
 			in:   "intro\n1. one\n2. two\noutro",
-			want: "\nintro\n\n1\\. one\n\n2\\. two\n\noutro\n",
+			// "outro" is a lazy continuation of item 2, so it aligns under "two".
+			want: "\nintro\n\n  1\\. one\n  2\\. two\n     outro\n",
 		},
 		{
 			name: "unordered list still bulleted",
 			in:   "- a\n- b\n- c",
 			want: "\n  • a\n  • b\n  • c\n",
+		},
+		{
+			name: "soft line break rendered as newline",
+			in:   "line one\nline two",
+			want: "\nline one\nline two\n",
+		},
+		{
+			name: "ordered list with continuation line",
+			in:   "1. item\n   continuation\n2. next",
+			// "continuation" aligns under "item" (5 spaces: 2 indent + "1. ").
+			want: "\n  1\\. item\n     continuation\n  2\\. next\n",
+		},
+		{
+			name: "nested list with continuation lines keeps indentation",
+			in: "1. Something\n" +
+				"   Some line that belongs to first point\n" +
+				"   Some other line\n" +
+				"2. Something else\n" +
+				"   Also a continuation line here\n" +
+				"   - And even a nested bullet\n" +
+				"     with its own wrapped continuation\n" +
+				"3. Final point\n" +
+				"   Single continuation line",
+			want: "\n  1\\. Something\n" +
+				"     Some line that belongs to first point\n" +
+				"     Some other line\n" +
+				"  2\\. Something else\n" +
+				"     Also a continuation line here\n" +
+				"    ‣ And even a nested bullet\n" +
+				"      with its own wrapped continuation\n" +
+				"  3\\. Final point\n" +
+				"     Single continuation line\n",
 		},
 	}
 	for _, tt := range tests {

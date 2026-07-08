@@ -90,5 +90,5 @@ Or with Docker (see `Dockerfile`, `docker-compose.yml.example` and `run.sh`):
 - [github.com/go-telegram/bot](https://github.com/go-telegram/bot)
 - [github.com/google/uuid](https://github.com/google/uuid)
 - [github.com/iamwavecut/go-tavily](https://github.com/iamwavecut/go-tavily) — Tavily web-search/extract client
-- [github.com/Mad-Pixels/goldmark-tgmd](https://github.com/Mad-Pixels/goldmark-tgmd) — CommonMark to Telegram MarkdownV2 conversion
+- [github.com/Mad-Pixels/goldmark-tgmd](https://github.com/Mad-Pixels/goldmark-tgmd) — CommonMark to Telegram MarkdownV2 conversion (vendored as a local fork in `third_party/goldmark-tgmd` with proper ordered-list numbering and soft-line-break handling; see the `replace` directive in `go.mod`)
 - [golang.org/x/image](https://pkg.go.dev/golang.org/x/image)

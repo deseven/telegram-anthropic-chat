@@ -137,7 +137,9 @@ func TestRenderListWithIDs(t *testing.T) {
 		{ID: 7, Text: "alpha", Date: ts},
 		{ID: 42, Text: "beta", Date: ts},
 	}
-	want := "**#7** (2025-07-09) alpha\n**#42** (2025-07-09) beta"
+	// Each line ends with two trailing spaces (hard line break) except the
+	// last, whose trailing whitespace is trimmed.
+	want := "**#7** (2025-07-09) alpha  \n**#42** (2025-07-09) beta"
 	if out := RenderList(ms); out != want {
 		t.Fatalf("expected id+date list, got %q", out)
 	}

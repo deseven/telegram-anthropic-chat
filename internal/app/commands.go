@@ -115,14 +115,15 @@ func (a *App) cmdMem(ctx context.Context, chatID int64, sess *session, text stri
 		sb.WriteString("You have no memories yet.")
 	} else {
 		if r := memories.RenderList(in); r != "" {
-			sb.WriteString("**Current context:**\n")
+			// Two trailing spaces force a hard line break before the list.
+			sb.WriteString("**Current context:**  \n")
 			sb.WriteString(r)
 		}
 		if len(out) > 0 {
 			if sb.Len() > 0 {
 				sb.WriteString("\n\n")
 			}
-			sb.WriteString("**Other memories:**\n")
+			sb.WriteString("**Other memories:**  \n")
 			sb.WriteString(memories.RenderList(out))
 		}
 	}

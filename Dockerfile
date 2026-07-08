@@ -1,6 +1,9 @@
 FROM golang:1.26 AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
+# The local goldmark-tgmd fork (referenced by a go.mod replace directive) must
+# be present before `go mod download` so the replacement path resolves.
+COPY third_party/ ./third_party/
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/tgbot .

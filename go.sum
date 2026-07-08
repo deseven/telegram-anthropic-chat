@@ -1,5 +1,3 @@
-github.com/Mad-Pixels/goldmark-tgmd v0.0.10 h1:tDJ/twV0+NfM9kgVbcGLKzi8Ol+g0vExAWjZdGBSvh8=
-github.com/Mad-Pixels/goldmark-tgmd v0.0.10/go.mod h1:miGhUbpxU/iDE66oKrDqbL0j0Jq7eGjk9vObhgsbOI8=
 github.com/anthropics/anthropic-sdk-go v1.56.0 h1:idVU14wOZ06D0GBNEvuhn927xXmBVEquo0469iDwLsc=
 github.com/anthropics/anthropic-sdk-go v1.56.0/go.mod h1:3EfIfmFqxH6rbiLcIP4tPFyXL/IHakx2wDG4OU+TIEI=
 github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
