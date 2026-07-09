@@ -20,22 +20,19 @@ import (
 
 const (
 	maxBackups = 10
-	maxRecentSessions = 3
 )
 
 // Memory is a single durable memory extracted from a chat session.
 type Memory struct {
-	SessionUUID string `json:"session_uuid,omitempty"` // UUID of the session this memory was extracted from
-	ID          int    `json:"id"`
-	Importance  int    `json:"importance"` // 1-10
-	Text        string `json:"text"`
-	Date        int64  `json:"date"` // creation time as a Unix timestamp (seconds, UTC)
+	ID         int    `json:"id"`
+	Importance int    `json:"importance"` // 1-10
+	Text       string `json:"text"`
+	Date       int64  `json:"date"` // creation time as a Unix timestamp (seconds, UTC)
 }
 
 // UserData is the on-disk representation of a user's state.
 type UserData struct {
 	UserDescription string   `json:"user_description"`
-	Sessions        []string `json:"sessions,omitempty"` // UUIDs of the last maxRecentSessions sessions that produced memories (most recent last)
 	Memories        []Memory `json:"memories,omitempty"`
 }
 
@@ -116,12 +113,11 @@ func (ud *UserData) NextMemoryID() int {
 	return max + 1
 }
 
-// AddMemories appends new memories, tagging each with the session UUID it was
-// extracted from, assigning a monotonic ID, and stamping the creation time.
-func (ud *UserData) AddMemories(in []Memory, sessionUUID string) {
+// AddMemories appends new memories, assigning a monotonic ID and stamping the
+// creation time. Importance is clamped to the 1-10 range.
+func (ud *UserData) AddMemories(in []Memory) {
 	now := time.Now().UTC().Unix()
 	for _, m := range in {
-		m.SessionUUID = sessionUUID
 		m.ID = ud.NextMemoryID()
 		if m.Importance < 1 {
 			m.Importance = 1
@@ -133,16 +129,6 @@ func (ud *UserData) AddMemories(in []Memory, sessionUUID string) {
 			m.Date = now
 		}
 		ud.Memories = append(ud.Memories, m)
-	}
-}
-
-// AddSession records a session UUID that produced memories, keeping only the
-// last maxRecentSessions entries (most recent last). This list drives the
-// fresh-context priority in memory selection.
-func (ud *UserData) AddSession(sessionUUID string) {
-	ud.Sessions = append(ud.Sessions, sessionUUID)
-	if len(ud.Sessions) > maxRecentSessions {
-		ud.Sessions = ud.Sessions[len(ud.Sessions)-maxRecentSessions:]
 	}
 }
 

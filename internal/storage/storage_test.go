@@ -82,7 +82,7 @@ func TestAddMemoriesStampsDate(t *testing.T) {
 		{Importance: 5, Text: "auto date"},
 		{Importance: 3, Text: "explicit date", Date: 1000},
 	}
-	ud.AddMemories(in, "session-uuid")
+	ud.AddMemories(in)
 
 	if ud.Memories[0].Date == 0 {
 		t.Fatal("expected auto-stamped date to be non-zero")

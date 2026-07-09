@@ -1,14 +1,17 @@
 // Package memories implements memory selection for the chat context.
 //
 // Selection algorithm:
-//  1. Pick all memories belonging to one of the recent sessions (the last N
-//     session UUIDs stored on the user), in historical (id ascending) order.
-//     These provide fresh context and are always included first.
-//  2. For the remaining budget, sort all other memories by importance
-//     descending and pick as many as fit (measured in characters of rendered
-//     text), from the top.
-//  3. Sort the picked older memories by id ascending and prepend them to the
-//     fresh-context memories, so the final order is oldest-first.
+//  1. Determine the most recent day (UTC) that produced any memory, using
+//     each memory's Date field. All memories from that day are "fresh" and are
+//     always included first, in historical (id ascending) order. This covers
+//     both edge cases: a day with many conversations and a week with a single
+//     one — the model always remembers everything from the last active day.
+//  2. For the remaining budget, sort all other (older) memories by importance
+//     descending, breaking ties by id descending so that within the same
+//     importance level the most recent memories come first. Pick as many as
+//     fit (measured in characters of rendered text), from the top.
+//  3. Sort all picked memories by id ascending so the final order is
+//     oldest-first, matching the natural order of events.
 //  4. Render a plain newline-separated list, without mentioning importance.
 package memories
 
@@ -22,40 +25,36 @@ import (
 )
 
 // Select picks memories for the LLM context and renders them as a plain list.
-// Memories from the recent sessions are included first (in historical order),
-// then older memories by importance for the remaining budget. If no memories
-// fit, an empty string is returned.
-func Select(memories []storage.Memory, ctxSize int, recentSessions []string) string {
-	picked, _ := Split(memories, ctxSize, recentSessions)
+// Memories from the most recent active day are included first (in historical
+// order), then older memories by importance (and recency within the same
+// importance) for the remaining budget. If no memories fit, an empty string is
+// returned.
+func Select(memories []storage.Memory, ctxSize int) string {
+	picked, _ := Split(memories, ctxSize)
 	return Render(picked)
 }
 
 // Split runs the selection algorithm and returns two slices: the memories that
-// fit under ctxSize (in the order they are sent to the LLM: older important
-// memories first, then fresh-context memories from recent sessions, each group
-// by id ascending), and the remaining memories (also sorted by id ascending
-// for stable display).
-func Split(memories []storage.Memory, ctxSize int, recentSessions []string) (in, out []storage.Memory) {
+// fit under ctxSize (sorted by id ascending for the natural order of events),
+// and the remaining memories (also sorted by id ascending for stable display).
+func Split(memories []storage.Memory, ctxSize int) (in, out []storage.Memory) {
 	if len(memories) == 0 || ctxSize <= 0 {
 		return nil, append([]storage.Memory(nil), memories...)
 	}
 
-	recent := make(map[string]bool, len(recentSessions))
-	for _, s := range recentSessions {
-		recent[s] = true
-	}
-
-	// Partition into fresh (from a recent session) and older (everything else),
-	// both in id-ascending (historical) order.
+	// Partition into fresh (from the most recent active day) and older
+	// (everything else), both in id-ascending (historical) order.
 	ordered := make([]storage.Memory, len(memories))
 	copy(ordered, memories)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		return ordered[i].ID < ordered[j].ID
 	})
 
+	latestDay := latestDayUnix(ordered)
+
 	var fresh, older []storage.Memory
 	for _, m := range ordered {
-		if recent[m.SessionUUID] {
+		if dayStartUnix(m.Date) == latestDay {
 			fresh = append(fresh, m)
 		} else {
 			older = append(older, m)
@@ -64,7 +63,7 @@ func Split(memories []storage.Memory, ctxSize int, recentSessions []string) (in,
 
 	used := 0
 	pickedFresh := make(map[int]bool)
-	// 1. Pick all fresh-context memories that fit, in historical order.
+	// 1. Pick all fresh memories that fit, in historical order.
 	for _, m := range fresh {
 		ln := len(m.Text) + 1
 		if used+ln > ctxSize {
@@ -74,12 +73,16 @@ func Split(memories []storage.Memory, ctxSize int, recentSessions []string) (in,
 		used += ln
 	}
 
-	// 2. Sort older memories by importance desc (stable to keep historical
-	// order on ties) and pick as many as fit in the remaining budget.
+	// 2. Sort older memories by importance desc, then id desc (most recent
+	// first within the same importance), and pick as many as fit in the
+	// remaining budget.
 	sortedOlder := make([]storage.Memory, len(older))
 	copy(sortedOlder, older)
 	sort.SliceStable(sortedOlder, func(i, j int) bool {
-		return sortedOlder[i].Importance > sortedOlder[j].Importance
+		if sortedOlder[i].Importance != sortedOlder[j].Importance {
+			return sortedOlder[i].Importance > sortedOlder[j].Importance
+		}
+		return sortedOlder[i].ID > sortedOlder[j].ID
 	})
 
 	pickedOlderSet := make(map[int]bool, len(sortedOlder))
@@ -92,8 +95,9 @@ func Split(memories []storage.Memory, ctxSize int, recentSessions []string) (in,
 		used += ln
 	}
 
-	// 3. Build the in/out slices. The "in" slice is: picked older memories
-	// (id ascending) prepended to picked fresh memories (id ascending).
+	// 3. Build the in/out slices. Both are sorted by id ascending: the "in"
+	// slice so the final order is oldest-first, and the "out" slice for stable
+	// display. Iterate over the id-ascending partitions to achieve this.
 	for _, m := range older {
 		if pickedOlderSet[m.ID] {
 			in = append(in, m)
@@ -109,6 +113,26 @@ func Split(memories []storage.Memory, ctxSize int, recentSessions []string) (in,
 		}
 	}
 	return in, out
+}
+
+// latestDayUnix returns the UTC start-of-day timestamp of the most recent day
+// that any of the given memories was created on. Memories are assumed to be
+// non-empty and to carry a non-zero Date (the storage layer backfills a zero
+// Date with the start of today on load).
+func latestDayUnix(memories []storage.Memory) int64 {
+	var latest int64
+	for _, m := range memories {
+		if d := dayStartUnix(m.Date); d > latest {
+			latest = d
+		}
+	}
+	return latest
+}
+
+// dayStartUnix truncates a Unix timestamp (seconds) to the start of its UTC
+// day and returns that start-of-day timestamp.
+func dayStartUnix(ts int64) int64 {
+	return time.Unix(ts, 0).UTC().Truncate(24 * time.Hour).Unix()
 }
 
 // Render renders a slice of memories as a plain newline-separated list,

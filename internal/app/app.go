@@ -307,7 +307,7 @@ func (a *App) handleBatch(batch []incomingMsg, s *session) {
 
 	// Build system prompt with current memories. `now` was captured at
 	// session start (see above) to keep the prompt stable across turns.
-	memList := memories.Select(s.data.Memories, a.cfg.MemoriesCtxSize, s.data.Sessions)
+	memList := memories.Select(s.data.Memories, a.cfg.MemoriesCtxSize)
 	system := prompt.Render(a.sysPromptTmpl, s.data.UserDescription, memList, now)
 
 	// Send typing notifications every typingInterval until the LLM responds.
@@ -534,13 +534,6 @@ func (a *App) extractAndClear(ctx context.Context, s *session) (int, error) {
 		return 0, nil
 	}
 
-	// Ensure the session has a UUID (it is normally assigned on the first
-	// message, but guard against any edge case).
-	if s.uuid == "" {
-		s.uuid = uuid.NewString()
-	}
-	sessionUUID := s.uuid
-
 	log.Print("app", "extracting memories for user %d (%d messages)", s.userID, len(ctxMsgs))
 
 	// Reuse the session start time for {now} so the memory-extraction
@@ -549,7 +542,7 @@ func (a *App) extractAndClear(ctx context.Context, s *session) (int, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	memList := memories.Select(data.Memories, a.cfg.MemoriesCtxSize, data.Sessions)
+	memList := memories.Select(data.Memories, a.cfg.MemoriesCtxSize)
 	history := llm.SerializeHistory(ctxMsgs)
 	system := prompt.Render(a.memoriesPromptTmpl, data.UserDescription, memList, now)
 	user := prompt.RenderWithHistory(a.memoriesUserPromptTmpl, data.UserDescription, memList, history, now)
@@ -570,10 +563,9 @@ func (a *App) extractAndClear(ctx context.Context, s *session) (int, error) {
 		for _, m := range extracted {
 			converted = append(converted, storage.Memory{Importance: m.Importance, Text: m.Text})
 		}
-		data.AddMemories(converted, sessionUUID)
-		data.AddSession(sessionUUID)
+		data.AddMemories(converted)
 		added = len(converted)
-		log.Print("app", "added %d memories for user %d (session %s)", added, s.userID, sessionUUID)
+		log.Print("app", "added %d memories for user %d", added, s.userID)
 	}
 
 	if err := a.store.Save(s.userID, data); err != nil {

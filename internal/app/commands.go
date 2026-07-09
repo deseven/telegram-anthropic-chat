@@ -109,7 +109,7 @@ func (a *App) cmdMem(ctx context.Context, chatID int64, sess *session, text stri
 		return
 	}
 
-	in, out := memories.Split(sess.data.Memories, a.cfg.MemoriesCtxSize, sess.data.Sessions)
+	in, out := memories.Split(sess.data.Memories, a.cfg.MemoriesCtxSize)
 
 	var sb strings.Builder
 	if len(in) == 0 && len(out) == 0 {

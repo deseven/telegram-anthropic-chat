@@ -4,7 +4,7 @@ A 1-on-1 Telegram chat bot backed by the Anthropic API, with persistent
 per-user memories. Conversations feel infinite to the user: there are no
 visible sessions. After the user is inactive for `sessionTimeout` seconds, the
 current in-memory conversation is sent to the model to extract important
-memories, which are then included (selected by importance and recency) in
+memories, which are then included (selected by recency and importance) in
 future contexts.
 
 ## Features
@@ -14,8 +14,9 @@ future contexts.
   whitelist.
 - Message debouncing.
 - Memory extraction on session timeout, on application exit, and on demand.
-  Memories are tagged with a session UUID; recent-session memories get
-  fresh-context priority, older ones are ranked by importance.
+  Memories from the most recent active day always get fresh-context priority;
+  the remaining budget is filled with older memories ranked by importance
+  (and recency within the same importance).
 - Web search / URL extraction via Tavily tool calling (optional).
 - Image handling: photos over 1024px are resized, re-encoded as JPEG @ 85%,
   base64-encoded and sent to Anthropic. Forwarded messages are attributed to
