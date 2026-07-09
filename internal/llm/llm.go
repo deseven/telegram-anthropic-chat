@@ -271,14 +271,20 @@ func (c *Client) ExtractMemoriesFromText(ctx context.Context, system, user strin
 }
 
 // historyEntry is a single message in the serialized [HISTORY] block.
+//
+// The author field uses "user" for the human's messages and "you" for the
+// assistant's own messages. This deliberately avoids the user/assistant role
+// naming so the memory-extraction model does not get confused and write
+// memories like "Assistant said ..." instead of "I said ...".
 type historyEntry struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Author  string `json:"author"`
+	Message string `json:"message"`
 }
 
 // SerializeHistory renders a slice of messages as a JSON array of
-// {role, content} objects suitable for the [HISTORY] block of the memories
-// user prompt. Image blocks are represented as "[image]" placeholders.
+// {author, message} objects suitable for the [HISTORY] block of the memories
+// user prompt. The author is "user" for the human's messages and "you" for the
+// assistant's messages. Image blocks are represented as "[image]" placeholders.
 //
 // Tool-calling turns are summarized: a tool_use is recorded with its name and
 // parameters (so the memory model knows what was looked up), while the
@@ -304,7 +310,11 @@ func SerializeHistory(msgs []Message) string {
 				b.WriteString("[image]")
 			}
 		}
-		entries = append(entries, historyEntry{Role: m.Role, Content: b.String()})
+		author := "user"
+		if m.Role == "assistant" {
+			author = "you"
+		}
+		entries = append(entries, historyEntry{Author: author, Message: b.String()})
 	}
 	out, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {

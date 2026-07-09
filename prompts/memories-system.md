@@ -6,7 +6,7 @@ You will be presented with a user message containing three blocks:
 
 [EXISTING MEMORIES] — what is already remembered. These are memories from earlier conversations that have already been written down. Use them as context: don't create duplicates of things already listed, and let them inform how new experiences build on or change what is already known.
 
-[HISTORY] — the most recent conversation, the raw log of what happened since memories were last extracted, as a JSON array of {role, content} objects. THIS is the block you extract new memories from. Read through it carefully and pick out the moments that matter — facts, preferences, ongoing situations, and personal context that would be useful in future chats.
+[HISTORY] — the most recent conversation, the raw log of what happened since memories were last extracted, as a JSON array of {author, message} objects. The human's messages have author "user"; your own messages have author "you". THIS is the block you extract new memories from. Read through it carefully and pick out the moments that matter — facts, preferences, ongoing situations, and personal context that would be useful in future chats.
 
 For each new memory you extract from [HISTORY], assign an importance score that reflects how much it matters:
 - 10 — very important, need to remember at all costs

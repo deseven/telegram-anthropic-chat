@@ -4,7 +4,7 @@
 //   - {user_description}
 //   - {now}            (Monday, 02 Jan 2006 15:04)
 //   - {memories}       (rendered memory list)
-//   - {history}        (JSON array of session messages)
+//   - {history}        (JSON array of {author, message} session messages)
 package prompt
 
 import (
