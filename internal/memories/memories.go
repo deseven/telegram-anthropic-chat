@@ -117,6 +117,30 @@ func Split(memories []storage.Memory, ctxSize int) (in, out []storage.Memory) {
 	return in, out
 }
 
+// Stale returns the memories that are candidates for automatic deletion at the
+// end of a session: those that did not fit into the ctxSize budget (i.e. they
+// are in the "out" partition of Split) AND are older than maxAge relative to
+// now. A memory counts as "older than maxAge" when its Date is strictly before
+// now-maxAge, so a memory exactly maxAge old is kept.
+//
+// Memories that fit the budget are never returned, regardless of age — valid
+// in-context memories are never pruned. If maxAge <= 0 the feature is disabled
+// and no memories are considered stale.
+func Stale(memories []storage.Memory, ctxSize int, maxAge time.Duration, now time.Time) []storage.Memory {
+	if maxAge <= 0 || len(memories) == 0 {
+		return nil
+	}
+	_, out := Split(memories, ctxSize)
+	threshold := now.Add(-maxAge).Unix()
+	var stale []storage.Memory
+	for _, m := range out {
+		if m.Date < threshold {
+			stale = append(stale, m)
+		}
+	}
+	return stale
+}
+
 // latestDayUnix returns the UTC start-of-day timestamp of the most recent day
 // that any of the given memories was created on. Memories are assumed to be
 // non-empty and to carry a non-zero Date (the storage layer backfills a zero

@@ -145,6 +145,26 @@ func (ud *UserData) DeleteMemory(id int) bool {
 	return false
 }
 
+// DeleteMemories removes every memory whose id is present in ids. It returns
+// the number of memories removed. Memory ids of remaining memories are NOT
+// renumbered: ids are stable identifiers. An empty (or nil) ids set is a no-op.
+func (ud *UserData) DeleteMemories(ids map[int]bool) int {
+	if len(ids) == 0 {
+		return 0
+	}
+	kept := ud.Memories[:0]
+	n := 0
+	for _, m := range ud.Memories {
+		if ids[m.ID] {
+			n++
+			continue
+		}
+		kept = append(kept, m)
+	}
+	ud.Memories = kept
+	return n
+}
+
 func (s *Store) path(userID int64) string {
 	return filepath.Join(s.base, fmt.Sprintf("%d.json", userID))
 }

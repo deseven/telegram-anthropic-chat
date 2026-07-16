@@ -17,6 +17,11 @@
   // How many characters of memories to push into the context (optional, default: 16384)
   "memoriesCtxSize": 16384,
 
+  // Max age in seconds for memories that don't fit the context budget. At the
+  // end of each session, memories older than this that also didn't make it
+  // into the context are automatically deleted (optional, default: 2592000 = 30 days)
+  "memoriesMaxAge": 2592000,
+
   // Seconds of inactivity after which a session is considered ended and memories are extracted (optional, default: 3600)
   "sessionTimeout": 3600,
 

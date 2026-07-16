@@ -58,6 +58,49 @@ func TestDeleteMemory(t *testing.T) {
 	}
 }
 
+// TestDeleteMemories verifies batch deletion by id set, including that
+// non-existent ids are ignored and that ids of remaining memories are stable.
+func TestDeleteMemories(t *testing.T) {
+	ud := &UserData{
+		UserDescription: "desc",
+		Memories: []Memory{
+			{ID: 1, Text: "one"},
+			{ID: 2, Text: "two"},
+			{ID: 3, Text: "three"},
+			{ID: 4, Text: "four"},
+		},
+	}
+	n := ud.DeleteMemories(map[int]bool{2: true, 4: true, 99: true})
+	if n != 2 {
+		t.Fatalf("expected 2 deleted, got %d", n)
+	}
+	if len(ud.Memories) != 2 {
+		t.Fatalf("expected 2 remaining, got %d: %+v", len(ud.Memories), ud.Memories)
+	}
+	want := []int{1, 3}
+	for i, w := range want {
+		if ud.Memories[i].ID != w {
+			t.Fatalf("Memories[%d].ID = %d, want %d (full: %+v)", i, ud.Memories[i].ID, w, ud.Memories)
+		}
+	}
+
+	// An empty (or nil) id set is a no-op.
+	if n := ud.DeleteMemories(nil); n != 0 {
+		t.Fatalf("expected 0 deleted for nil ids, got %d", n)
+	}
+	if len(ud.Memories) != 2 {
+		t.Fatalf("nil ids must not change memories, got %d", len(ud.Memories))
+	}
+
+	// Deleting all remaining empties the slice.
+	if n := ud.DeleteMemories(map[int]bool{1: true, 3: true}); n != 2 {
+		t.Fatalf("expected 2 deleted, got %d", n)
+	}
+	if len(ud.Memories) != 0 {
+		t.Fatalf("expected empty after deleting all, got %d: %+v", len(ud.Memories), ud.Memories)
+	}
+}
+
 func TestNextMemoryIDAfterDelete(t *testing.T) {
 	// NextMemoryID is max(remaining)+1. Deleting a non-max memory leaves the
 	// max unchanged, so the next id is unaffected.

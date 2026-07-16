@@ -295,3 +295,137 @@ func TestSplitRecentMemoriesDontFitAll(t *testing.T) {
 		t.Fatalf("expected 2 remaining, got %d: %+v", len(out), out)
 	}
 }
+
+// --- Stale pruning tests ---
+
+// testMonth is 30 days, used as the pruning threshold in the tests below.
+const testMonth = 30 * 24 * time.Hour
+
+// TestStaleDropsOldOverflowOnly is the central safety test: only memories that
+// are BOTH out-of-context (did not fit the budget) AND older than maxAge are
+// returned as stale. In-context memories (even ancient ones) and recent
+// out-of-context memories are never pruned.
+func TestStaleDropsOldOverflowOnly(t *testing.T) {
+	now := time.Now()
+	recentDay := dayStart(now.Add(-5 * 24 * time.Hour))  // most recent active day
+	recentOld := dayStart(now.Add(-10 * 24 * time.Hour)) // older partition, within maxAge
+	ancientDay := dayStart(now.Add(-40 * 24 * time.Hour)) // older partition, beyond maxAge
+
+	// Budget is tight: only the fresh memory (id 1) and the highest-importance
+	// older memory (id 2) fit. The rest overflow.
+	//   id 1: "R"  -> 1+1 = 2  (fresh, fits)
+	//   id 2: "OF" -> 2+1 = 3  (older, imp 9, fits)  => ancient but IN context
+	//   id 3: "OS" -> 2+1 = 3  (older, imp 1, overflows) => ancient + overflow = STALE
+	//   id 4: "RO" -> 2+1 = 3  (older, imp 1, overflows) => recent overflow, NOT stale
+	ms := []storage.Memory{
+		{ID: 1, Importance: 5, Text: "R", Date: recentDay},
+		{ID: 2, Importance: 9, Text: "OF", Date: ancientDay},
+		{ID: 3, Importance: 1, Text: "OS", Date: ancientDay},
+		{ID: 4, Importance: 1, Text: "RO", Date: recentOld},
+	}
+	// Budget 5 = id1 (2) + id2 (3). id3/id4 overflow.
+	stale := Stale(ms, 5, testMonth, now)
+	if len(stale) != 1 {
+		t.Fatalf("expected 1 stale memory, got %d: %+v", len(stale), stale)
+	}
+	if stale[0].ID != 3 {
+		t.Fatalf("expected stale to be id 3, got %+v", stale)
+	}
+}
+
+// TestStaleNeverReturnsInContext verifies the key invariant: a memory that fits
+// the budget is never stale, no matter how old it is.
+func TestStaleNeverReturnsInContext(t *testing.T) {
+	now := time.Now()
+	ancient := dayStart(now.Add(-40 * 24 * time.Hour))
+	// An ancient, high-importance memory that fits the budget.
+	ms := []storage.Memory{
+		{ID: 1, Importance: 10, Text: "ancient but fits", Date: ancient},
+	}
+	stale := Stale(ms, 1000, testMonth, now)
+	if len(stale) != 0 {
+		t.Fatalf("in-context memory must never be stale, got %+v", stale)
+	}
+}
+
+// TestStaleAllFitNothingStale verifies that when everything fits (empty out
+// partition), nothing is stale even if all memories are ancient.
+func TestStaleAllFitNothingStale(t *testing.T) {
+	now := time.Now()
+	ancient := dayStart(now.Add(-40 * 24 * time.Hour))
+	ms := []storage.Memory{
+		{ID: 1, Importance: 5, Text: "ancient one", Date: ancient},
+		{ID: 2, Importance: 5, Text: "ancient two", Date: ancient},
+	}
+	stale := Stale(ms, 1000, testMonth, now)
+	if len(stale) != 0 {
+		t.Fatalf("expected no stale when all fit, got %+v", stale)
+	}
+}
+
+// TestStaleRecentOverflowNotStale verifies that out-of-context memories within
+// the maxAge window are retained (not stale).
+func TestStaleRecentOverflowNotStale(t *testing.T) {
+	now := time.Now()
+	recent := dayStart(now.Add(-3 * 24 * time.Hour))
+	// Two memories on the most recent day; a tiny budget drops the second, but
+	// it is recent so it must not be pruned.
+	ms := []storage.Memory{
+		{ID: 1, Importance: 5, Text: "recent fits", Date: recent},
+		{ID: 2, Importance: 1, Text: "recent overflow", Date: recent},
+	}
+	stale := Stale(ms, len("recent fits")+1, testMonth, now)
+	if len(stale) != 0 {
+		t.Fatalf("recent overflow must not be stale, got %+v", stale)
+	}
+}
+
+// TestStaleBoundary verifies that a memory exactly maxAge old is NOT stale
+// (only strictly older memories are pruned).
+func TestStaleBoundary(t *testing.T) {
+	now := time.Now()
+	exactly := now.Add(-testMonth).Unix() // exactly maxAge ago (second precision)
+	ms := []storage.Memory{
+		{ID: 1, Importance: 1, Text: "boundary overflow", Date: exactly},
+	}
+	// Doesn't fit (budget too small) but exactly maxAge old => not stale.
+	stale := Stale(ms, 1, testMonth, now)
+	if len(stale) != 0 {
+		t.Fatalf("memory exactly maxAge old must not be stale, got %+v", stale)
+	}
+}
+
+// TestStaleJustOverBoundary verifies that a memory just over maxAge old that
+// also overflows IS stale.
+func TestStaleJustOverBoundary(t *testing.T) {
+	now := time.Now()
+	over := now.Add(-testMonth - time.Second).Unix() // one second past maxAge
+	ms := []storage.Memory{
+		{ID: 1, Importance: 1, Text: "just over overflow", Date: over},
+	}
+	stale := Stale(ms, 1, testMonth, now)
+	if len(stale) != 1 || stale[0].ID != 1 {
+		t.Fatalf("memory just over maxAge + overflow must be stale, got %+v", stale)
+	}
+}
+
+// TestStaleDisabled verifies that maxAge <= 0 disables pruning entirely, even
+// for ancient overflowing memories.
+func TestStaleDisabled(t *testing.T) {
+	now := time.Now()
+	ancient := dayStart(now.Add(-40 * 24 * time.Hour))
+	ms := []storage.Memory{
+		{ID: 1, Importance: 1, Text: "ancient overflow", Date: ancient},
+	}
+	stale := Stale(ms, 1, 0, now)
+	if len(stale) != 0 {
+		t.Fatalf("maxAge<=0 must disable pruning, got %+v", stale)
+	}
+}
+
+// TestStaleEmpty verifies that an empty (or nil) input yields no stale memories.
+func TestStaleEmpty(t *testing.T) {
+	if stale := Stale(nil, 100, testMonth, time.Now()); len(stale) != 0 {
+		t.Fatalf("expected no stale for nil input, got %+v", stale)
+	}
+}

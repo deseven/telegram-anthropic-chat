@@ -50,6 +50,7 @@ Copy `config.jsonc.example` to `config.jsonc` and fill it in.
 | `model`              | no       | `claude-sonnet-5`            | Anthropic model |
 | `maxTokens`          | no       | `16384`                      | Max tokens for chat responses |
 | `memoriesCtxSize`    | no       | `16384`                      | Character budget for memories in context |
+| `memoriesMaxAge`     | no       | `2592000`                    | Max age (seconds) for out-of-context memories before they are pruned at session end |
 | `sessionTimeout`     | no       | `3600`                       | Seconds of inactivity before memory extraction |
 | `systemPrompt`       | no       | `prompts/system.md`          | Path to chat system prompt |
 | `memoriesPrompt`     | no       | `prompts/memories-system.md` | Path to memory-extraction system prompt |

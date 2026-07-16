@@ -568,6 +568,24 @@ func (a *App) extractAndClear(ctx context.Context, s *session) (int, error) {
 		log.Print("app", "added %d memories for user %d", added, s.userID)
 	}
 
+	// Prune stale memories: those that did not fit into the context budget
+	// (memoriesCtxSize) and are older than memoriesMaxAge. This runs at every
+	// session end so the on-disk store does not grow without bound with
+	// low-value, ancient memories that never reach the context anyway.
+	// Memories that fit the budget are never pruned, so valid in-context
+	// memories are always retained.
+	maxAge := time.Duration(a.cfg.MemoriesMaxAge) * time.Second
+	stale := memories.Stale(data.Memories, a.cfg.MemoriesCtxSize, maxAge, time.Now())
+	if len(stale) > 0 {
+		ids := make(map[int]bool, len(stale))
+		for _, m := range stale {
+			ids[m.ID] = true
+		}
+		if n := data.DeleteMemories(ids); n > 0 {
+			log.Print("app", "pruned %d stale memories for user %d", n, s.userID)
+		}
+	}
+
 	if err := a.store.Save(s.userID, data); err != nil {
 		log.Print("app", "save user data failed for %d: %v", s.userID, err)
 	}

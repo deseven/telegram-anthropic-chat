@@ -36,6 +36,9 @@ func TestLoadJSONC(t *testing.T) {
 	if c.SessionTimeout != 3600 {
 		t.Fatalf("sessionTimeout default = %d", c.SessionTimeout)
 	}
+	if c.MemoriesMaxAge != 30*24*3600 {
+		t.Fatalf("memoriesMaxAge default = %d", c.MemoriesMaxAge)
+	}
 	if c.BotUpdateMethod != "polling" {
 		t.Fatalf("method default = %q", c.BotUpdateMethod)
 	}

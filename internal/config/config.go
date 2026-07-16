@@ -19,6 +19,7 @@ type Config struct {
 	Model              string `json:"model"`
 	MaxTokens          int    `json:"maxTokens"`
 	MemoriesCtxSize    int    `json:"memoriesCtxSize"`
+	MemoriesMaxAge     int    `json:"memoriesMaxAge"`
 	SessionTimeout     int    `json:"sessionTimeout"`
 	SystemPrompt       string `json:"systemPrompt"`
 	MemoriesPrompt     string `json:"memoriesPrompt"`
@@ -67,6 +68,9 @@ func (c *Config) applyDefaults() {
 	if c.MemoriesCtxSize == 0 {
 		c.MemoriesCtxSize = 16384
 	}
+	if c.MemoriesMaxAge == 0 {
+		c.MemoriesMaxAge = 30 * 24 * 3600 // 30 days
+	}
 	if c.SessionTimeout == 0 {
 		c.SessionTimeout = 3600
 	}
@@ -100,6 +104,9 @@ func (c *Config) validate() error {
 	}
 	if c.MemoriesCtxSize <= 0 {
 		return fmt.Errorf("memoriesCtxSize must be positive, got %d", c.MemoriesCtxSize)
+	}
+	if c.MemoriesMaxAge <= 0 {
+		return fmt.Errorf("memoriesMaxAge must be positive, got %d", c.MemoriesMaxAge)
 	}
 	if c.MaxTokens <= 0 {
 		return fmt.Errorf("maxTokens must be positive, got %d", c.MaxTokens)
