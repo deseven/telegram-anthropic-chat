@@ -95,8 +95,12 @@ type Message struct {
 
 // Chat sends the system prompt + messages and returns the assistant's text.
 // The resulting assistant turn is appended to *msgsPtr.
+//
+// Prompt caching is intentionally NOT enabled here: this entry point is used
+// for one-shot calls (e.g. memory extraction) that have no reusable prefix
+// across requests, so caching would only add cost without hits.
 func (c *Client) Chat(ctx context.Context, system string, msgsPtr *[]Message) (string, error) {
-	return c.ChatWithTools(ctx, system, msgsPtr, nil)
+	return c.ChatWithTools(ctx, system, msgsPtr, nil, false)
 }
 
 // ChatWithTools is like Chat but, when tools is non-nil, offers the given
@@ -114,9 +118,19 @@ func (c *Client) Chat(ctx context.Context, system string, msgsPtr *[]Message) (s
 // as the result string (and is NOT forwarded via the callback), so the
 // caller sends it exactly once.
 //
+// If cache is true, automatic prompt caching is enabled with a 1-hour TTL:
+// a top-level cache_control breakpoint is placed on the last cacheable block
+// and moves forward as the conversation grows, so the stable prefix (system
+// prompt + prior turns) is read from cache on each subsequent request. The
+// 1h TTL is chosen to match the session timeout, keeping the cache alive
+// across user turns even when the user is idle for several minutes. The 1h
+// TTL is gated behind the extended-cache-ttl beta, so the corresponding
+// anthropic-beta header is attached to the request. Pass false for one-shot
+// calls (e.g. memory extraction) that have no reusable prefix.
+//
 // If tools is nil, the call behaves exactly like Chat (no tool loop, no
 // callback), and the single assistant turn is appended to *msgsPtr.
-func (c *Client) ChatWithTools(ctx context.Context, system string, msgsPtr *[]Message, tools ToolExecutor, onText ...func(string)) (string, error) {
+func (c *Client) ChatWithTools(ctx context.Context, system string, msgsPtr *[]Message, tools ToolExecutor, cache bool, onText ...func(string)) (string, error) {
 	var textCb func(string)
 	if len(onText) > 0 {
 		textCb = onText[0]
@@ -131,7 +145,7 @@ func (c *Client) ChatWithTools(ctx context.Context, system string, msgsPtr *[]Me
 
 	for iter := 0; ; iter++ {
 		conversation := toParams(*msgsPtr)
-		resp, err := c.api.Messages.New(ctx, anthropic.MessageNewParams{
+		params := anthropic.MessageNewParams{
 			Model:     anthropic.Model(c.model),
 			MaxTokens: c.maxTokens,
 			System: []anthropic.TextBlockParam{
@@ -139,7 +153,25 @@ func (c *Client) ChatWithTools(ctx context.Context, system string, msgsPtr *[]Me
 			},
 			Messages: conversation,
 			Tools:    toolDefs,
-		})
+		}
+		// When cache is enabled (active chat), turn on automatic prompt
+		// caching with a 1-hour TTL. The top-level cache_control breakpoint
+		// is applied to the last cacheable block and moves forward as the
+		// conversation grows, so the stable prefix (system + prior turns) is
+		// read from cache on each subsequent request. The 1h TTL matches the
+		// session timeout so a cache entry survives between user turns even
+		// when the user is idle for several minutes. The 1h TTL is gated
+		// behind the extended-cache-ttl beta, so the corresponding header is
+		// attached to the request.
+		var reqOpts []option.RequestOption
+		if cache {
+			cc := anthropic.NewCacheControlEphemeralParam()
+			cc.TTL = anthropic.CacheControlEphemeralTTLTTL1h
+			params.CacheControl = cc
+			reqOpts = append(reqOpts, option.WithHeaderAdd(
+				"anthropic-beta", string(anthropic.AnthropicBetaExtendedCacheTTL2025_04_11)))
+		}
+		resp, err := c.api.Messages.New(ctx, params, reqOpts...)
 		if err != nil {
 			var apierr *anthropic.Error
 			if errors.As(err, &apierr) {

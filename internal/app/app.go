@@ -336,7 +336,7 @@ func (a *App) handleBatch(batch []incomingMsg, s *session) {
 		a.sendMarkdown(context.Background(), chatID, text)
 	}
 
-	reply, err := a.llm.ChatWithTools(context.Background(), system, &s.ctx, a.tavily, onText)
+	reply, err := a.llm.ChatWithTools(context.Background(), system, &s.ctx, a.tavily, true, onText)
 	typingCancel()
 	if err != nil {
 		log.Print("app", "LLM request failed for %d: %v", s.userID, err)
