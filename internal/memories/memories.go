@@ -12,7 +12,9 @@
 //     fit (measured in characters of rendered text), from the top.
 //  3. Sort all picked memories by id ascending so the final order is
 //     oldest-first, matching the natural order of events.
-//  4. Render a plain newline-separated list, without mentioning importance.
+//  4. Render the picked memories grouped by date (UTC), each group preceded
+//     by a "Weekday, DD Mon YYYY" header and the memories as bullet points,
+//     without mentioning importance.
 package memories
 
 import (
@@ -24,7 +26,7 @@ import (
 	"github.com/zoo/telegram-anthropic-chat/internal/storage"
 )
 
-// Select picks memories for the LLM context and renders them as a plain list.
+// Select picks memories for the LLM context and renders them grouped by date.
 // Memories from the most recent active day are included first (in historical
 // order), then older memories by importance (and recency within the same
 // importance) for the remaining budget. If no memories fit, an empty string is
@@ -135,14 +137,31 @@ func dayStartUnix(ts int64) int64 {
 	return time.Unix(ts, 0).UTC().Truncate(24 * time.Hour).Unix()
 }
 
-// Render renders a slice of memories as a plain newline-separated list,
-// without mentioning importance. Returns an empty string for an empty slice.
+// Render renders a slice of memories grouped by their creation date (UTC).
+// Each group is preceded by a "Weekday, DD Mon YYYY" header, followed by the
+// memories of that day as bullet points ("- text"). Memories are assumed to be
+// sorted by id ascending (oldest first), which matches the natural order of
+// events, so memories sharing a day appear consecutively. Importance is not
+// mentioned. Returns an empty string for an empty slice.
 func Render(memories []storage.Memory) string {
 	if len(memories) == 0 {
 		return ""
 	}
 	var b strings.Builder
+	var curDay string
 	for _, m := range memories {
+		day := time.Unix(m.Date, 0).UTC().Format("Monday, 02 Jan 2006")
+		if day != curDay {
+			if curDay != "" {
+				// The previous bullet already ended with '\n'; one more
+				// produces a single blank line separating the date groups.
+				b.WriteByte('\n')
+			}
+			b.WriteString(day)
+			b.WriteByte('\n')
+			curDay = day
+		}
+		b.WriteString("- ")
 		b.WriteString(m.Text)
 		b.WriteByte('\n')
 	}

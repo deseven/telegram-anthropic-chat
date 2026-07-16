@@ -28,7 +28,13 @@ func TestSelectOrderingAndLimit(t *testing.T) {
 	}
 	// Budget fits the first three (53 chars + 3 newlines = 56).
 	out := Select(ms, 56)
-	lines := strings.Split(out, "\n")
+	// Memories are rendered as bullet lines ("- text"); extract them in order.
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "- ") {
+			lines = append(lines, strings.TrimPrefix(l, "- "))
+		}
+	}
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 picked memories, got %d: %q", len(lines), out)
 	}
@@ -122,12 +128,38 @@ func TestRenderEmpty(t *testing.T) {
 }
 
 func TestRenderPlain(t *testing.T) {
+	// Zero date => 1970-01-01 (Thursday). Both memories share that day, so a
+	// single header is emitted followed by two bullet points.
 	ms := []storage.Memory{
 		{ID: 1, Text: "one"},
 		{ID: 2, Text: "two"},
 	}
-	if out := Render(ms); out != "one\ntwo" {
-		t.Fatalf("expected 'one\\ntwo', got %q", out)
+	want := "Thursday, 01 Jan 1970\n- one\n- two"
+	if out := Render(ms); out != want {
+		t.Fatalf("expected grouped list, got %q", out)
+	}
+}
+
+// TestRenderGroupsByDate verifies that memories from different days are split
+// into separate date headers, each followed by its bullet-pointed memories.
+func TestRenderGroupsByDate(t *testing.T) {
+	day1 := dayStart(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) // Wednesday
+	day2 := dayStart(time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)) // Thursday
+	ms := []storage.Memory{
+		{ID: 1, Text: "Some memory from Wednesday", Date: day1},
+		{ID: 2, Text: "Another memory from Wednesday", Date: day1},
+		{ID: 3, Text: "Some memory from Thursday", Date: day2},
+		{ID: 4, Text: "Another memory from Thursday", Date: day2},
+	}
+	want := "Wednesday, 15 Jul 2026\n" +
+		"- Some memory from Wednesday\n" +
+		"- Another memory from Wednesday\n" +
+		"\n" +
+		"Thursday, 16 Jul 2026\n" +
+		"- Some memory from Thursday\n" +
+		"- Another memory from Thursday"
+	if out := Render(ms); out != want {
+		t.Fatalf("expected date-grouped list, got %q", out)
 	}
 }
 
