@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,6 +64,12 @@ type App struct {
 	// users, eliminating data races and smoothing Anthropic API rate-limit
 	// pressure.
 	jobCh chan job
+
+	// webMu guards webCodes and webTokens, which are accessed both from the
+	// global queue worker and from HTTP handler goroutines.
+	webMu     sync.Mutex
+	webCodes  map[string]webAuthCode // temporary /web auth codes
+	webTokens map[string]int64       // permanent web tokens -> user id
 }
 
 type session struct {
@@ -127,6 +134,8 @@ func New(cfg *config.Config, store *storage.Store, llmClient *llm.Client, tgbot 
 		memoriesUserPromptTmpl: memUserTmpl,
 		sessions:               make(map[int64]*session),
 		jobCh:                  make(chan job, 256),
+		webCodes:               make(map[string]webAuthCode),
+		webTokens:              make(map[string]int64),
 	}
 	if tvClient != nil {
 		log.Print("app", "web search (Tavily) enabled")
@@ -373,7 +382,10 @@ func (a *App) sendTyping(ctx context.Context, chatID int64) {
 		ChatID: chatID,
 		Action: models.ChatActionTyping,
 	})
-	if err != nil {
+	// A "context canceled" error here is expected and benign: typingCancel()
+	// fires the moment the LLM response arrives, which can abort an in-flight
+	// sendChatAction request. Don't log it as a failure.
+	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Print("app", "send typing to %d failed: %v", chatID, err)
 	}
 }

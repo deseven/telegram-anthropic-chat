@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,10 @@ type Memory struct {
 type UserData struct {
 	UserDescription string   `json:"user_description"`
 	Memories        []Memory `json:"memories,omitempty"`
+	// WebTokens are permanent access tokens for the web interface, created
+	// by exchanging a temporary code from the /web command. They are stored
+	// here so they survive restarts.
+	WebTokens []string `json:"web_tokens,omitempty"`
 }
 
 // Store manages user data files under a base directory.
@@ -54,6 +59,29 @@ func New(base string) (*Store, error) {
 func (s *Store) Exists(userID int64) bool {
 	_, err := os.Stat(s.path(userID))
 	return err == nil
+}
+
+// ListUsers returns the ids of all users that have a data file (i.e. all
+// whitelisted users), based on the {user_id}.json file naming scheme.
+// Non-matching files (backups, examples) are ignored.
+func (s *Store) ListUsers() ([]int64, error) {
+	entries, err := os.ReadDir(s.base)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		id, err := strconv.ParseInt(strings.TrimSuffix(name, ".json"), 10, 64)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // Load reads the data file for userID. Returns an error if it does not exist.

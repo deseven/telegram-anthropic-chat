@@ -23,6 +23,8 @@ future contexts.
   their original author; unsupported attachments become text placeholders.
 - Replies are converted to Telegram MarkdownV2 and split when too long.
 - Polling or webhook update methods.
+- Web interface for managing memories in the browser (add / edit / delete),
+  served by the built-in HTTP server; see `/web`.
 - Timestamped backups of user data on every write (up to 10 kept).
 
 ## Commands
@@ -30,13 +32,27 @@ future contexts.
 Any message starting with `/` is treated as a command and never enters the LLM
 context. Unknown commands print a short help.
 
-- `/mem` — list your memories, split into the ones currently in context and the
-  rest, each prefixed with its id.
-- `/mem del {id} [{id} ...]` — delete one or more memories by id.
+- `/web` — get a personal link (valid for 60 seconds) to the web interface for
+  managing your memories in the browser. Requires `httpPublicURL`.
 - `/end` — end the current session and extract memories immediately.
 - `/forget` — end the current session without extracting memories.
 - `/rld` — reload your data (description and memories) from disk; the in-memory
   conversation is preserved.
+
+
+## Web interface
+
+The built-in HTTP server (used for the Telegram webhook in webhook mode) also
+serves a single-page web app at `{httpPublicURL}/` for viewing and editing
+memories. Send `/web` to the bot to get a link with a temporary 16-symbol auth
+code (valid for 60 seconds); the app exchanges it for a permanent token stored
+in the browser's localStorage. Tokens are persisted in the user data file
+(`web_tokens`) so they survive restarts. Changes made in the web interface are
+saved immediately and apply to the next LLM request, whether or not a chat
+session is active. The interface is unavailable when `httpPublicURL` is empty.
+
+In webhook mode Telegram calls `{httpPublicURL}/webhook` (registered via
+`SetWebhook` on every startup).
 
 ## Configuration
 
@@ -55,9 +71,9 @@ Copy `config.jsonc.example` to `config.jsonc` and fill it in.
 | `systemPrompt`       | no       | `prompts/system.md`          | Path to chat system prompt |
 | `memoriesPrompt`     | no       | `prompts/memories-system.md` | Path to memory-extraction system prompt |
 | `memoriesUserPrompt` | no       | `prompts/memories-user.md`   | Path to memory-extraction user prompt |
-| `webhookPort`        | no       | `5666`                       | Webhook HTTP server port |
+| `httpPort`           | no       | `5666`                       | HTTP server port (webhook + web interface) |
+| `httpPublicURL`      | webhook mode |                          | Public HTTPS base URL; web app at `/`, webhook at `/webhook` |
 | `webhookSecretToken` | no       |                              | Telegram webhook secret token |
-| `webhookPublicURL`   | no       |                              | Public URL for `SetWebhook` |
 | `dumpRequestsPath`   | no       |                              | File to dump Anthropic requests/responses (truncated on start) |
 | `tavilyApiKey`       | no       |                              | Tavily API key; enables `web_search` and `extract_url` tools |
 

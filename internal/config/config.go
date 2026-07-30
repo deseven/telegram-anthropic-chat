@@ -24,9 +24,9 @@ type Config struct {
 	SystemPrompt       string `json:"systemPrompt"`
 	MemoriesPrompt     string `json:"memoriesPrompt"`
 	MemoriesUserPrompt string `json:"memoriesUserPrompt"`
-	WebhookPort        int    `json:"webhookPort"`
+	HTTPPort           int    `json:"httpPort"`
+	HTTPPublicURL      string `json:"httpPublicURL"`
 	WebhookSecretToken string `json:"webhookSecretToken"`
-	WebhookPublicURL   string `json:"webhookPublicURL"`
 	DumpRequestsPath   string `json:"dumpRequestsPath"`
 	TavilyAPIKey       string `json:"tavilyApiKey"`
 }
@@ -83,9 +83,12 @@ func (c *Config) applyDefaults() {
 	if c.MemoriesUserPrompt == "" {
 		c.MemoriesUserPrompt = "prompts/memories-user.md"
 	}
-	if c.WebhookPort == 0 {
-		c.WebhookPort = 5666
+	if c.HTTPPort == 0 {
+		c.HTTPPort = 5666
 	}
+	// Normalize the public URL so handlers can append paths without
+	// worrying about a trailing slash.
+	c.HTTPPublicURL = strings.TrimRight(c.HTTPPublicURL, "/")
 }
 
 func (c *Config) validate() error {
@@ -98,6 +101,9 @@ func (c *Config) validate() error {
 	}
 	if c.BotUpdateMethod != "polling" && c.BotUpdateMethod != "webhook" {
 		return fmt.Errorf("botUpdateMethod must be 'polling' or 'webhook', got %q", c.BotUpdateMethod)
+	}
+	if c.BotUpdateMethod == "webhook" && c.HTTPPublicURL == "" {
+		return fmt.Errorf("httpPublicURL is required when botUpdateMethod is 'webhook'")
 	}
 	if c.SessionTimeout <= 0 {
 		return fmt.Errorf("sessionTimeout must be positive, got %d", c.SessionTimeout)

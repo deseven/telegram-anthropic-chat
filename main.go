@@ -87,9 +87,14 @@ func main() {
 	log.Print("main", "bot starting as @%s via %s", botUsername(tgbot), cfg.BotUpdateMethod)
 
 	if cfg.BotUpdateMethod == "webhook" {
-		go runWebhook(ctx, cfg, tgbot)
+		go runHTTPServer(ctx, cfg, tgbot, application)
 	} else {
 		go runPolling(ctx, tgbot)
+		// In polling mode the HTTP server is only needed for the web
+		// interface, which requires a public URL.
+		if cfg.HTTPPublicURL != "" {
+			go runHTTPServer(ctx, cfg, nil, application)
+		}
 	}
 
 	<-ctx.Done()
@@ -105,24 +110,36 @@ func runPolling(ctx context.Context, tgbot *bot.Bot) {
 	tgbot.Start(ctx)
 }
 
-func runWebhook(ctx context.Context, cfg *config.Config, tgbot *bot.Bot) {
-	if cfg.WebhookPublicURL != "" {
-		params := &bot.SetWebhookParams{URL: cfg.WebhookPublicURL}
+// runHTTPServer runs the HTTP server that serves the Telegram webhook (when
+// tgbot is non-nil, i.e. in webhook mode) and the web interface (when
+// httpPublicURL is configured).
+func runHTTPServer(ctx context.Context, cfg *config.Config, tgbot *bot.Bot, application *app.App) {
+	mux := http.NewServeMux()
+
+	if tgbot != nil {
+		// The webhook lives on its own path so the root path can serve the
+		// web interface. SetWebhook is called on every startup, so existing
+		// deployments pick up the new URL automatically.
+		webhookURL := cfg.HTTPPublicURL + "/webhook"
+		params := &bot.SetWebhookParams{URL: webhookURL}
 		if cfg.WebhookSecretToken != "" {
 			params.SecretToken = cfg.WebhookSecretToken
 		}
-		_, err := tgbot.SetWebhook(ctx, params)
-		if err != nil {
+		if _, err := tgbot.SetWebhook(ctx, params); err != nil {
 			log.Print("main", "SetWebhook failed: %v", err)
 		}
+		go tgbot.StartWebhook(ctx)
+		mux.Handle("/webhook", tgbot.WebhookHandler())
 	}
-	go tgbot.StartWebhook(ctx)
 
-	mux := http.NewServeMux()
-	mux.Handle("/", tgbot.WebhookHandler())
-	addr := addrForPort(cfg.WebhookPort)
+	if cfg.HTTPPublicURL != "" {
+		application.RegisterWebRoutes(mux)
+		log.Print("main", "web interface available at %s/", cfg.HTTPPublicURL)
+	}
+
+	addr := addrForPort(cfg.HTTPPort)
 	srv := &http.Server{Addr: addr, Handler: mux}
-	log.Print("main", "webhook server listening on %s", addr)
+	log.Print("main", "HTTP server listening on %s", addr)
 
 	// Shut down the HTTP server when the context is cancelled (e.g. on
 	// SIGTERM/SIGINT) so ListenAndServe returns and the process can exit.
@@ -133,15 +150,15 @@ func runWebhook(ctx context.Context, cfg *config.Config, tgbot *bot.Bot) {
 
 	select {
 	case <-ctx.Done():
-		log.Print("main", "webhook context cancelled, shutting down HTTP server")
+		log.Print("main", "context cancelled, shutting down HTTP server")
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Print("main", "webhook server shutdown error: %v", err)
+			log.Print("main", "HTTP server shutdown error: %v", err)
 		}
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
-			log.Print("main", "webhook server error: %v", err)
+			log.Print("main", "HTTP server error: %v", err)
 		}
 	}
 }

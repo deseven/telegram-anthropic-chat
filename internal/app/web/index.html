@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Memories</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<style>
+/* ============================== CSS ============================== */
+/* Compact the defaults: Pico scales its base font size up to 131% on wide
+   viewports; pin it and tighten spacing. */
+:root {
+  --pico-font-size: 90%;
+  --pico-line-height: 1.45;
+  --pico-spacing: 0.75rem;
+  --pico-typography-spacing-vertical: 0.6rem;
+  --pico-block-spacing-vertical: 0.75rem;
+  --pico-block-spacing-horizontal: 1rem;
+  --pico-form-element-spacing-vertical: 0.4rem;
+  --pico-form-element-spacing-horizontal: 0.6rem;
+}
+/* Limit the content width: Pico grows its container up to ~1536px on wide
+   viewports; cap it at 1024px and keep it centered. */
+main.container { max-width: 1024px; margin-inline: auto; }
+/* Small additions on top of Pico. */
+.muted { color: var(--pico-muted-color); }
+.topbar { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.5rem 0; }
+.topbar .spacer { flex: 1; }
+.topbar button { width: auto; margin: 0; padding: 0.3rem 0.8rem; font-size: 0.85rem; }
+.error {
+  border: 1px solid #e5484d;
+  background: rgba(229, 72, 77, 0.12);
+  border-radius: var(--pico-border-radius);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.error button { width: auto; margin: 0 0 0 0.5rem; padding: 0.1rem 0.5rem; font-size: 0.8rem; }
+.description { white-space: pre-wrap; margin: 0; }
+.add-form { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.add-form .grow { flex: 1; min-width: 240px; }
+.add-form textarea { margin: 0; min-height: 0; height: 2.5rem; resize: vertical; }
+.add-form input[type="number"] { width: 4.5rem; margin: 0; }
+.add-form button { width: auto; margin: 0; }
+.tabs { display: flex; gap: 0.5rem; margin: 0.75rem 0; }
+.tabs button { width: auto; margin: 0; padding: 0.35rem 0.9rem; font-size: 0.9rem; }
+table { margin: 0; font-size: 0.9rem; }
+th, td { padding: 0.35rem 0.6rem; }
+td.id, td.imp { white-space: nowrap; color: var(--pico-muted-color); }
+.date-group h3 { font-size: 0.95rem; margin: 1rem 0 0.25rem; color: var(--pico-muted-color); }
+td.actions { text-align: right; white-space: nowrap; }
+td.actions button { width: auto; margin: 0 0 0 0.3rem; padding: 0.15rem 0.55rem; font-size: 0.8rem; }
+td input, td textarea { margin: 0; }
+td.imp input { width: 4rem; padding: 0.2rem 0.4rem; }
+td textarea { min-height: 0; }
+article h2 { margin-top: 0; font-size: 1rem; }
+article p { margin-bottom: 0.5rem; }
+.center { text-align: center; padding: 3rem 0; }
+</style>
+</head>
+<body>
+<!-- ============================== HTML ============================== -->
+<div id="app"></div>
+
+<script type="module">
+/* ============================== JS ============================== */
+import { html, render } from 'https://esm.sh/htm/preact/standalone';
+
+const TOKEN_KEY = 'memories_token';
+
+const state = {
+  token: localStorage.getItem(TOKEN_KEY) || null,
+  status: 'loading', // loading | needAuth | error | ready
+  error: null,
+  authError: false,  // error is auth-related: offer to clear the token
+  info: null,
+  tab: 'active',     // active | other
+  editing: null,     // id of the memory being edited
+  busy: false,
+};
+
+function update() {
+  render(html`<${App} />`, document.getElementById('app'));
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    method: opts.method || 'GET',
+    headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || ('Request failed (HTTP ' + res.status + ')'));
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+async function init() {
+  const code = new URLSearchParams(location.search).get('code');
+  if (code) {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || ('Authentication failed (HTTP ' + res.status + ')'));
+      state.token = data.token;
+      localStorage.setItem(TOKEN_KEY, data.token);
+      history.replaceState(null, '', '/');
+    } catch (e) {
+      state.error = e.message;
+      state.authError = true;
+      if (!state.token) { state.status = 'needAuth'; update(); return; }
+    }
+  }
+  if (!state.token) {
+    state.status = 'needAuth';
+    update();
+    return;
+  }
+  await loadInfo();
+}
+
+async function loadInfo() {
+  state.status = 'loading';
+  update();
+  try {
+    state.info = await api('/api/getInfo');
+    state.status = 'ready';
+    state.authError = false;
+  } catch (e) {
+    state.error = e.message;
+    state.authError = e.status === 401 || e.status === 403;
+    state.status = state.info ? 'ready' : 'error';
+  }
+  update();
+}
+
+// refreshInfo silently re-syncs state from the server in the background,
+// without switching to the loading view. Used after mutations so the local
+// optimistic update is reconciled with the server-side memory split.
+async function refreshInfo() {
+  try {
+    state.info = await api('/api/getInfo');
+    state.authError = false;
+  } catch (e) {
+    state.error = e.message;
+    state.authError = e.status === 401 || e.status === 403;
+  }
+  update();
+}
+
+// mutate runs a CRUD request and applies the result to local state
+// immediately (applyLocal), so the UI updates in place without a reload.
+// A silent background refresh then reconciles the local change with the
+// server (e.g. the active/other memory classification).
+async function mutate(fn, applyLocal) {
+  state.busy = true;
+  state.error = null;
+  state.authError = false;
+  update();
+  try {
+    applyLocal(await fn());
+    state.editing = null;
+    state.busy = false;
+    update();
+    refreshInfo();
+  } catch (e) {
+    state.error = e.message;
+    state.authError = e.status === 401 || e.status === 403;
+    state.busy = false;
+    update();
+  }
+}
+
+function addMemory() {
+  const text = document.getElementById('new-text').value.trim();
+  const importance = parseInt(document.getElementById('new-importance').value, 10);
+  if (!text) { state.error = 'Memory text is required.'; update(); return; }
+  if (!(importance >= 1 && importance <= 10)) { state.error = 'Importance must be between 1 and 10.'; update(); return; }
+  mutate(
+    () => api('/api/memory', { method: 'POST', body: { text, importance } }),
+    (created) => {
+      // New memories are created today, so they land in the active list in
+      // the common case; the background refresh fixes the classification if
+      // the context budget says otherwise.
+      state.info.activeMemories.push(created);
+      document.getElementById('new-text').value = '';
+    }
+  );
+}
+
+function saveEdit(id) {
+  const text = document.getElementById('edit-text-' + id).value.trim();
+  const importance = parseInt(document.getElementById('edit-importance-' + id).value, 10);
+  if (!text) { state.error = 'Memory text is required.'; update(); return; }
+  if (!(importance >= 1 && importance <= 10)) { state.error = 'Importance must be between 1 and 10.'; update(); return; }
+  mutate(
+    () => api('/api/memory/' + id + '/edit', { method: 'POST', body: { text, importance } }),
+    (updated) => {
+      for (const list of [state.info.activeMemories, state.info.otherMemories]) {
+        const i = list.findIndex(m => m.id === updated.id);
+        if (i >= 0) list[i] = updated;
+      }
+    }
+  );
+}
+
+function deleteMemory(id) {
+  if (!confirm('Delete memory #' + id + '?')) return;
+  mutate(
+    () => api('/api/memory/' + id + '/delete', { method: 'POST' }),
+    () => {
+      state.info.activeMemories = state.info.activeMemories.filter(m => m.id !== id);
+      state.info.otherMemories = state.info.otherMemories.filter(m => m.id !== id);
+    }
+  );
+}
+
+function forgetToken() {
+  localStorage.removeItem(TOKEN_KEY);
+  state.token = null;
+  state.info = null;
+  state.error = null;
+  state.authError = false;
+  state.status = 'needAuth';
+  update();
+}
+
+function setTab(tab) {
+  state.tab = tab;
+  state.editing = null;
+  update();
+}
+
+function fmtDate(unix) {
+  return new Date(unix * 1000).toISOString().slice(0, 10);
+}
+
+/* ---------- views ---------- */
+
+function ErrorBanner() {
+  if (!state.error) return null;
+  return html`<div class="error" role="alert">
+    ${state.error}
+    ${state.authError && state.token ? html`<button class="outline" onClick=${forgetToken}>Clear saved token</button>` : null}
+  </div>`;
+}
+
+function ViewRow(m) {
+  return html`<tr>
+    <td class="id">#${m.id}</td>
+    <td class="imp">${m.importance}</td>
+    <td>${m.text}</td>
+    <td class="actions">
+      <button class="outline" disabled=${state.busy} onClick=${() => { state.editing = m.id; state.error = null; update(); }}>Edit</button>
+      <button class="outline secondary" disabled=${state.busy} onClick=${() => deleteMemory(m.id)}>Delete</button>
+    </td>
+  </tr>`;
+}
+
+function EditRow(m) {
+  return html`<tr>
+    <td class="id">#${m.id}</td>
+    <td class="imp"><input type="number" id="edit-importance-${m.id}" min="1" max="10" value=${m.importance} /></td>
+    <td><textarea id="edit-text-${m.id}" rows="3">${m.text}</textarea></td>
+    <td class="actions">
+      <button disabled=${state.busy} aria-busy=${state.busy} onClick=${() => saveEdit(m.id)}>Save</button>
+      <button class="outline secondary" disabled=${state.busy} onClick=${() => { state.editing = null; update(); }}>Cancel</button>
+    </td>
+  </tr>`;
+}
+
+// groupByDate groups memories by their (UTC) calendar date, returning
+// [date, items] pairs sorted with the newest date first. The order of
+// memories within each date group is preserved.
+function groupByDate(items) {
+  const groups = new Map();
+  for (const m of items) {
+    const d = fmtDate(m.date);
+    if (!groups.has(d)) groups.set(d, []);
+    groups.get(d).push(m);
+  }
+  return [...groups.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+}
+
+function MemoryTable({ items }) {
+  if (!items || items.length === 0) {
+    return html`<p class="muted">No memories.</p>`;
+  }
+  return groupByDate(items).map(([date, ms]) => html`
+    <section class="date-group">
+      <h3>${date}</h3>
+      <div class="overflow-auto">
+        <table>
+          <thead><tr><th>ID</th><th>Imp.</th><th>Text</th><th></th></tr></thead>
+          <tbody>${ms.map(m => state.editing === m.id ? EditRow(m) : ViewRow(m))}</tbody>
+        </table>
+      </div>
+    </section>`);
+}
+
+function Main() {
+  const info = state.info;
+  const active = info.activeMemories || [];
+  const other = info.otherMemories || [];
+  return html`
+    <header class="topbar">
+      <strong>Memories</strong> <span class="muted">user ${info.userId}</span>
+      <span class="spacer"></span>
+      <button class="outline secondary" onClick=${forgetToken}>Forget this browser</button>
+    </header>
+    <${ErrorBanner} />
+    <article>
+      ${info.session && info.session.active
+        ? html`<p>Active session: ${info.session.messages} messages, started ${new Date(info.session.startedAt).toLocaleString()}.</p>`
+        : html`<p class="muted">No active session.</p>`}
+      <p class="description">${info.userDescription}</p>
+    </article>
+    <form class="add-form" onSubmit=${(e) => { e.preventDefault(); addMemory(); }}>
+      <div class="grow">
+        <textarea id="new-text" rows="1" placeholder="New memory…" aria-label="Memory text"></textarea>
+      </div>
+      <input type="number" id="new-importance" min="1" max="10" value="5" aria-label="Importance (1–10)" title="Importance (1–10)" />
+      <button type="submit" disabled=${state.busy} aria-busy=${state.busy}>Add</button>
+    </form>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected=${state.tab === 'active'}
+        class=${state.tab === 'active' ? '' : 'outline secondary'}
+        onClick=${() => setTab('active')}>Active memories (${active.length})</button>
+      <button role="tab" aria-selected=${state.tab === 'other'}
+        class=${state.tab === 'other' ? '' : 'outline secondary'}
+        onClick=${() => setTab('other')}>Other memories (${other.length})</button>
+    </div>
+    <${MemoryTable} items=${state.tab === 'active' ? active : other} />
+  `;
+}
+
+function App() {
+  if (state.status === 'needAuth') {
+    return html`<main class="container">
+      <h1>Memories</h1>
+      <${ErrorBanner} />
+      <article>
+        <p>This browser is not linked to your account yet.</p>
+        <p>To use the web interface, open the bot chat and send the <code>/web</code> command, then open the link it gives you. The link is valid for 60 seconds.</p>
+      </article>
+    </main>`;
+  }
+  if (state.status === 'error') {
+    return html`<main class="container">
+      <h1>Memories</h1>
+      <${ErrorBanner} />
+      <article>
+        <p>Something went wrong while loading your data.</p>
+        <button onClick=${loadInfo}>Retry</button>
+      </article>
+    </main>`;
+  }
+  if (state.status === 'loading' || !state.info) {
+    return html`<main class="container"><article aria-busy="true" class="center">Loading…</article></main>`;
+  }
+  return html`<main class="container"><${Main} /></main>`;
+}
+
+init();
+</script>
+</body>
+</html>

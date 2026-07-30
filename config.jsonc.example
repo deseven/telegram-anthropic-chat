@@ -34,14 +34,22 @@
   // Path to the user prompt used when extracting memories (optional, default: prompts/memories-user.md)
   "memoriesUserPrompt": "prompts/memories-user.md",
 
-  // --- Webhook-only settings (ignored in polling mode) ---
-  // Port the HTTP server listens on (optional, default: 5666)
-  "webhookPort": 5666,
-  // Secret token Telegram sends in the X-Telegram-Bot-Api-Secret-Token header (optional but recommended)
-  "webhookSecretToken": "",
+  // --- HTTP server settings ---
+  // The built-in HTTP server serves the Telegram webhook (in webhook mode)
+  // and the web interface for managing memories (the /web command).
 
-  // Public HTTPS URL Telegram will call, used for SetWebhook (optional; if empty, SetWebhook is skipped)
-  "webhookPublicURL": "",
+  // Port the HTTP server listens on (optional, default: 5666)
+  "httpPort": 5666,
+
+  // Public HTTPS base URL of this bot, e.g. "https://bot.example.com".
+  // The web interface is served at "{httpPublicURL}/" and the Telegram
+  // webhook at "{httpPublicURL}/webhook". Required when botUpdateMethod is
+  // "webhook" (used for SetWebhook) and for the /web command (used to build
+  // personal web-interface links). If empty, the web interface is unavailable.
+  "httpPublicURL": "",
+
+  // Secret token Telegram sends in the X-Telegram-Bot-Api-Secret-Token header (webhook mode only, optional but recommended)
+  "webhookSecretToken": "",
 
   // Path to a file where every Anthropic API request and response (chat and
   // memory extraction) will be dumped for debugging. Optional, default: empty
