@@ -3,9 +3,10 @@
 // Selection algorithm:
 //  1. Determine the most recent day (UTC) that produced any memory, using
 //     each memory's Date field. All memories from that day are "fresh" and are
-//     always included first, in historical (id ascending) order. This covers
-//     both edge cases: a day with many conversations and a week with a single
-//     one — the model always remembers everything from the last active day.
+//     included first, in historical (id ascending) order. When older memories
+//     also exist, fresh memories are capped at freshBudgetFraction of the
+//     character budget so that a single prolific day cannot starve the rest
+//     of history out of the context entirely.
 //  2. For the remaining budget, sort all other (older) memories by importance
 //     descending, breaking ties by id descending so that within the same
 //     importance level the most recent memories come first. Pick as many as
@@ -15,6 +16,10 @@
 //  4. Render the picked memories grouped by date (UTC), each group preceded
 //     by a "Weekday, DD Mon YYYY" header and the memories as bullet points,
 //     without mentioning importance.
+//
+// Automatic pruning (Stale) deletes out-of-context memories whose LastUsed
+// time is older than importance*ageUnit — i.e. a memory is guaranteed to
+// survive importance age-units since it last reached the context.
 package memories
 
 import (
@@ -25,6 +30,14 @@ import (
 
 	"github.com/zoo/telegram-anthropic-chat/internal/storage"
 )
+
+// freshBudgetFraction is the share of the context budget that memories from
+// the most recent active day may occupy when older memories exist. It
+// guarantees that at least a third of the budget remains for older memories
+// ranked by importance, so they keep reaching the context (refreshing their
+// LastUsed time) even after a day that produced an unusually large number of
+// memories.
+const freshBudgetFraction = 2.0 / 3.0
 
 // Select picks memories for the LLM context and renders them grouped by date.
 // Memories from the most recent active day are included first (in historical
@@ -65,10 +78,16 @@ func Split(memories []storage.Memory, ctxSize int) (in, out []storage.Memory) {
 
 	used := 0
 	pickedFresh := make(map[int]bool)
-	// 1. Pick all fresh memories that fit, in historical order.
+	// 1. Pick all fresh memories that fit, in historical order. When older
+	// memories exist, fresh memories are capped at freshBudgetFraction of
+	// the budget so older history always keeps some room.
+	freshCap := ctxSize
+	if len(older) > 0 {
+		freshCap = int(float64(ctxSize) * freshBudgetFraction)
+	}
 	for _, m := range fresh {
 		ln := len(m.Text) + 1
-		if used+ln > ctxSize {
+		if used+ln > freshCap {
 			break
 		}
 		pickedFresh[m.ID] = true
@@ -119,22 +138,33 @@ func Split(memories []storage.Memory, ctxSize int) (in, out []storage.Memory) {
 
 // Stale returns the memories that are candidates for automatic deletion at the
 // end of a session: those that did not fit into the ctxSize budget (i.e. they
-// are in the "out" partition of Split) AND are older than maxAge relative to
-// now. A memory counts as "older than maxAge" when its Date is strictly before
-// now-maxAge, so a memory exactly maxAge old is kept.
+// are in the "out" partition of Split) AND have not reached the context within
+// their importance-scaled retention period.
+//
+// The retention period is importance*ageUnit: with the default ageUnit of 10
+// days, an importance-1 memory is safe to forget 10 days after it last
+// appeared in the context, while an importance-10 memory is kept for 100
+// days. Recency is measured from LastUsed (the last time the memory was
+// selected into the context), falling back to the creation Date when LastUsed
+// is zero. A memory exactly at its threshold is kept — only memories strictly
+// past it are stale.
 //
 // Memories that fit the budget are never returned, regardless of age — valid
-// in-context memories are never pruned. If maxAge <= 0 the feature is disabled
-// and no memories are considered stale.
-func Stale(memories []storage.Memory, ctxSize int, maxAge time.Duration, now time.Time) []storage.Memory {
-	if maxAge <= 0 || len(memories) == 0 {
+// in-context memories are never pruned. If ageUnit <= 0 the feature is
+// disabled and no memories are considered stale.
+func Stale(memories []storage.Memory, ctxSize int, ageUnit time.Duration, now time.Time) []storage.Memory {
+	if ageUnit <= 0 || len(memories) == 0 {
 		return nil
 	}
 	_, out := Split(memories, ctxSize)
-	threshold := now.Add(-maxAge).Unix()
 	var stale []storage.Memory
 	for _, m := range out {
-		if m.Date < threshold {
+		lastUsed := m.LastUsed
+		if lastUsed == 0 {
+			lastUsed = m.Date
+		}
+		threshold := now.Add(-time.Duration(m.Importance) * ageUnit).Unix()
+		if lastUsed < threshold {
 			stale = append(stale, m)
 		}
 	}

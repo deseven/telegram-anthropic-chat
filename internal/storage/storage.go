@@ -29,6 +29,12 @@ type Memory struct {
 	Importance int    `json:"importance"` // 1-10
 	Text       string `json:"text"`
 	Date       int64  `json:"date"` // creation time as a Unix timestamp (seconds, UTC)
+	// LastUsed is the last time (Unix seconds, UTC) this memory was selected
+	// for the chat context by a session that completed memory extraction.
+	// Automatic pruning is based on LastUsed (falling back to Date when
+	// zero), not on Date: a memory that keeps reaching the context keeps
+	// proving its relevance and is never pruned.
+	LastUsed int64 `json:"last_used,omitempty"`
 }
 
 // UserData is the on-disk representation of a user's state.
@@ -105,6 +111,12 @@ func (s *Store) Load(userID int64) (*UserData, error) {
 		if ud.Memories[i].Date == 0 {
 			ud.Memories[i].Date = today
 		}
+		// Memories written before the LastUsed field existed fall back to
+		// their creation date, so existing data behaves as before until the
+		// memory next reaches the context.
+		if ud.Memories[i].LastUsed == 0 {
+			ud.Memories[i].LastUsed = ud.Memories[i].Date
+		}
 	}
 	return &ud, nil
 }
@@ -157,6 +169,19 @@ func (ud *UserData) AddMemories(in []Memory) {
 			m.Date = now
 		}
 		ud.Memories = append(ud.Memories, m)
+	}
+}
+
+// TouchMemories stamps every memory whose id is present in ids with the given
+// LastUsed time. It is called at session end for the memories selected into
+// the chat context, so that retention (importance-scaled) is measured from the
+// last time a memory was actually useful rather than from its creation time.
+// An empty (or nil) ids set is a no-op.
+func (ud *UserData) TouchMemories(ids map[int]bool, now int64) {
+	for i := range ud.Memories {
+		if ids[ud.Memories[i].ID] {
+			ud.Memories[i].LastUsed = now
+		}
 	}
 }
 

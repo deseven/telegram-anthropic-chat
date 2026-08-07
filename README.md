@@ -66,7 +66,7 @@ Copy `config.jsonc.example` to `config.jsonc` and fill it in.
 | `model`              | no       | `claude-sonnet-5`            | Anthropic model |
 | `maxTokens`          | no       | `16384`                      | Max tokens for chat responses |
 | `memoriesCtxSize`    | no       | `16384`                      | Character budget for memories in context |
-| `memoriesMaxAge`     | no       | `2592000`                    | Max age (seconds) for out-of-context memories before they are pruned at session end |
+| `memoriesMaxAge`     | no       | `864000`                     | Retention unit (seconds) per importance point: an out-of-context memory is pruned at session end once it hasn't reached the context for `importance × memoriesMaxAge` (default 10 days per point, so importance 1 = 10 days, importance 10 = 100 days) |
 | `sessionTimeout`     | no       | `3600`                       | Seconds of inactivity before memory extraction |
 | `systemPrompt`       | no       | `prompts/system.md`          | Path to chat system prompt |
 | `memoriesPrompt`     | no       | `prompts/memories-system.md` | Path to memory-extraction system prompt |

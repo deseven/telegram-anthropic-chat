@@ -221,7 +221,9 @@ func TestSplitRecentDayFirst(t *testing.T) {
 }
 
 // TestSplitRecentDayBudgetExhausted verifies that when recent-day memories
-// alone exhaust the budget, no older memories are included.
+// alone exhaust their (capped) share of the budget, they fill no more than
+// that share — older memories are not starved out, and only an older memory
+// that fits the actual remainder is included.
 func TestSplitRecentDayBudgetExhausted(t *testing.T) {
 	today := dayStart(time.Now())
 	old := today - 86400 // yesterday
@@ -230,16 +232,46 @@ func TestSplitRecentDayBudgetExhausted(t *testing.T) {
 		{ID: 2, Importance: 1, Text: "fresh two", Date: today},   // 9+1=10
 		{ID: 3, Importance: 10, Text: "old critical", Date: old}, // 12+1=13
 	}
-	// Budget only fits the two fresh memories (20 chars).
+	// Budget 20: the fresh share is capped at 2/3 (13), so only the first
+	// fresh memory fits (10). "old critical" needs 13 more (23 > 20), so it
+	// stays out despite its importance — the cap reserves room, but a memory
+	// still has to fit the true remaining budget.
 	in, out := Split(ms, 20)
-	if len(in) != 2 {
-		t.Fatalf("expected 2 in-context (fresh only), got %d: %+v", len(in), in)
+	if len(in) != 1 || in[0].ID != 1 {
+		t.Fatalf("expected only id 1 in-context, got %+v", in)
 	}
-	if len(out) != 1 || out[0].ID != 3 {
-		t.Fatalf("expected remaining to be id 3, got %+v", out)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 remaining, got %d: %+v", len(out), out)
 	}
-	if in[0].ID != 1 || in[1].ID != 2 {
-		t.Fatalf("unexpected in order: %+v", in)
+}
+
+// TestSplitFreshCapProtectsOlder verifies the monster-day scenario: a huge
+// fresh day may occupy at most ~2/3 of the budget, so the highest-importance
+// older memories always keep their context slot.
+func TestSplitFreshCapProtectsOlder(t *testing.T) {
+	today := dayStart(time.Now())
+	old := today - 86400
+	ms := []storage.Memory{
+		{ID: 1, Importance: 10, Text: "old critical", Date: old}, // 12+1=13
+		{ID: 2, Importance: 1, Text: "fresh one", Date: today},   // 9+1=10
+		{ID: 3, Importance: 1, Text: "fresh two", Date: today},   // 9+1=10
+		{ID: 4, Importance: 1, Text: "fresh three", Date: today}, // 11+1=12
+	}
+	// Budget 33: fresh cap is 2/3 (22), so fresh picks id 2 (10) and id 3
+	// (10) — id 4 (12) would make 32 > 22. Older gets the rest: 33-20=13,
+	// exactly fitting "old critical" (13).
+	in, out := Split(ms, 33)
+	want := []int{1, 2, 3}
+	if len(in) != len(want) {
+		t.Fatalf("expected %d in-context, got %+v", len(want), in)
+	}
+	for i, w := range want {
+		if in[i].ID != w {
+			t.Fatalf("in[%d].ID = %d, want %d (full in: %+v)", i, in[i].ID, w, in)
+		}
+	}
+	if len(out) != 1 || out[0].ID != 4 {
+		t.Fatalf("expected remaining to be id 4, got %+v", out)
 	}
 }
 
@@ -275,8 +307,8 @@ func TestSplitOlderImportanceThenRecency(t *testing.T) {
 }
 
 // TestSplitRecentMemoriesDontFitAll verifies that if even the recent-day
-// memories don't all fit, they are included in historical order until the
-// budget runs out, and nothing older is added.
+// memories don't all fit (within their capped share), they are included in
+// historical order until the cap runs out.
 func TestSplitRecentMemoriesDontFitAll(t *testing.T) {
 	today := dayStart(time.Now())
 	old := today - 86400
@@ -285,11 +317,11 @@ func TestSplitRecentMemoriesDontFitAll(t *testing.T) {
 		{ID: 2, Importance: 1, Text: "second fresh memory", Date: today}, // 20+1=21
 		{ID: 3, Importance: 10, Text: "old", Date: old},                  // 3+1=4
 	}
-	// Budget fits only the first fresh memory (20). The second (21) would
-	// overflow, and "old" has no room either.
+	// Budget 20: fresh cap is 2/3 (13), which fits neither fresh memory (20,
+	// 21), so the older "old" (4) is the only pick.
 	in, out := Split(ms, 20)
-	if len(in) != 1 || in[0].ID != 1 {
-		t.Fatalf("expected only id 1 in-context, got %+v", in)
+	if len(in) != 1 || in[0].ID != 3 {
+		t.Fatalf("expected only id 3 in-context, got %+v", in)
 	}
 	if len(out) != 2 {
 		t.Fatalf("expected 2 remaining, got %d: %+v", len(out), out)
@@ -298,38 +330,43 @@ func TestSplitRecentMemoriesDontFitAll(t *testing.T) {
 
 // --- Stale pruning tests ---
 
-// testMonth is 30 days, used as the pruning threshold in the tests below.
-const testMonth = 30 * 24 * time.Hour
+// testUnit is the per-importance retention unit used in the tests below:
+// a memory is stale once it hasn't reached the context for importance*testUnit.
+const testUnit = 24 * time.Hour
 
 // TestStaleDropsOldOverflowOnly is the central safety test: only memories that
-// are BOTH out-of-context (did not fit the budget) AND older than maxAge are
-// returned as stale. In-context memories (even ancient ones) and recent
-// out-of-context memories are never pruned.
+// are BOTH out-of-context (did not fit the budget) AND past their
+// importance-scaled retention are returned as stale. In-context memories (even
+// ancient ones) and recently-used out-of-context memories are never pruned.
 func TestStaleDropsOldOverflowOnly(t *testing.T) {
 	now := time.Now()
-	recentDay := dayStart(now.Add(-5 * 24 * time.Hour))  // most recent active day
-	recentOld := dayStart(now.Add(-10 * 24 * time.Hour)) // older partition, within maxAge
-	ancientDay := dayStart(now.Add(-40 * 24 * time.Hour)) // older partition, beyond maxAge
+	recentDay := dayStart(now.Add(-5 * 24 * time.Hour))   // most recent active day
+	recentOld := now.Add(-10 * 24 * time.Hour).Unix()     // older partition, within retention
+	ancientDay := now.Add(-40 * 24 * time.Hour).Unix()    // older partition, past retention
 
 	// Budget is tight: only the fresh memory (id 1) and the highest-importance
 	// older memory (id 2) fit. The rest overflow.
 	//   id 1: "R"  -> 1+1 = 2  (fresh, fits)
-	//   id 2: "OF" -> 2+1 = 3  (older, imp 9, fits)  => ancient but IN context
-	//   id 3: "OS" -> 2+1 = 3  (older, imp 1, overflows) => ancient + overflow = STALE
-	//   id 4: "RO" -> 2+1 = 3  (older, imp 1, overflows) => recent overflow, NOT stale
+	//   id 2: "OF" -> 2+1 = 3  (older, imp 9, fits)      => ancient but IN context (and
+	//                                                       used 1 day ago, so within 9*1d)
+	//   id 3: "OS" -> 2+1 = 3  (older, imp 1, overflows)  => unused for 40d > 1*1d = STALE
+	//   id 4: "RO" -> 2+1 = 3  (older, imp 1, overflows)  => unused for 10d > 1*1d = STALE
+	//   id 5: "RN" -> 2+1 = 3  (older, imp 9, overflows)  => unused for 10d < 9*1d = kept
 	ms := []storage.Memory{
 		{ID: 1, Importance: 5, Text: "R", Date: recentDay},
-		{ID: 2, Importance: 9, Text: "OF", Date: ancientDay},
+		{ID: 2, Importance: 9, Text: "OF", Date: ancientDay, LastUsed: now.Add(-24 * time.Hour).Unix()},
 		{ID: 3, Importance: 1, Text: "OS", Date: ancientDay},
 		{ID: 4, Importance: 1, Text: "RO", Date: recentOld},
+		{ID: 5, Importance: 9, Text: "RN", Date: recentOld},
 	}
-	// Budget 5 = id1 (2) + id2 (3). id3/id4 overflow.
-	stale := Stale(ms, 5, testMonth, now)
-	if len(stale) != 1 {
-		t.Fatalf("expected 1 stale memory, got %d: %+v", len(stale), stale)
+	// Budget 5: fresh cap = 3 (2/3 of 5), so id1 (2) fits; the remaining 3
+	// chars fit the top-ranked older memory, id2 (3). id3/id4/id5 overflow.
+	stale := Stale(ms, 5, testUnit, now)
+	if len(stale) != 2 {
+		t.Fatalf("expected 2 stale memories, got %d: %+v", len(stale), stale)
 	}
-	if stale[0].ID != 3 {
-		t.Fatalf("expected stale to be id 3, got %+v", stale)
+	if stale[0].ID != 3 || stale[1].ID != 4 {
+		t.Fatalf("expected stale ids 3 and 4, got %+v", stale)
 	}
 }
 
@@ -342,7 +379,7 @@ func TestStaleNeverReturnsInContext(t *testing.T) {
 	ms := []storage.Memory{
 		{ID: 1, Importance: 10, Text: "ancient but fits", Date: ancient},
 	}
-	stale := Stale(ms, 1000, testMonth, now)
+	stale := Stale(ms, 1000, testUnit, now)
 	if len(stale) != 0 {
 		t.Fatalf("in-context memory must never be stale, got %+v", stale)
 	}
@@ -357,59 +394,108 @@ func TestStaleAllFitNothingStale(t *testing.T) {
 		{ID: 1, Importance: 5, Text: "ancient one", Date: ancient},
 		{ID: 2, Importance: 5, Text: "ancient two", Date: ancient},
 	}
-	stale := Stale(ms, 1000, testMonth, now)
+	stale := Stale(ms, 1000, testUnit, now)
 	if len(stale) != 0 {
 		t.Fatalf("expected no stale when all fit, got %+v", stale)
 	}
 }
 
 // TestStaleRecentOverflowNotStale verifies that out-of-context memories within
-// the maxAge window are retained (not stale).
+// their importance-scaled retention window are retained (not stale).
 func TestStaleRecentOverflowNotStale(t *testing.T) {
 	now := time.Now()
-	recent := dayStart(now.Add(-3 * 24 * time.Hour))
-	// Two memories on the most recent day; a tiny budget drops the second, but
-	// it is recent so it must not be pruned.
+	recent := now.Add(-3 * 24 * time.Hour).Unix()
+	// All on the same day 3 days ago (the most recent active day). A tiny
+	// budget fits only the first memory; the others overflow but were "used"
+	// 3 days ago: importance 5 gives them 5 days of retention, so they must
+	// not be pruned.
 	ms := []storage.Memory{
 		{ID: 1, Importance: 5, Text: "recent fits", Date: recent},
-		{ID: 2, Importance: 1, Text: "recent overflow", Date: recent},
+		{ID: 2, Importance: 5, Text: "recent overflow", Date: recent},
+		{ID: 3, Importance: 5, Text: "imp five overflow", Date: recent},
 	}
-	stale := Stale(ms, len("recent fits")+1, testMonth, now)
+	stale := Stale(ms, len("recent fits")+1, testUnit, now)
 	if len(stale) != 0 {
 		t.Fatalf("recent overflow must not be stale, got %+v", stale)
 	}
 }
 
-// TestStaleBoundary verifies that a memory exactly maxAge old is NOT stale
-// (only strictly older memories are pruned).
+// TestStaleImportanceScaling verifies that the retention period scales with
+// importance: at 25 unused days, memories with importance 1/5/10 (retention
+// 1/5/10 days) are stale while a (hypothetically clamped) importance-30 memory
+// (30-day retention) with the same usage date is kept.
+func TestStaleImportanceScaling(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-25 * 24 * time.Hour).Unix()
+	// All on the same day (25 days ago), none fits the budget.
+	ms := []storage.Memory{
+		{ID: 1, Importance: 1, Text: "one", Date: old},     // retention 1*1d: stale
+		{ID: 2, Importance: 5, Text: "five", Date: old},    // retention 5*1d: stale
+		{ID: 3, Importance: 10, Text: "ten", Date: old},    // retention 10*1d: stale
+		{ID: 4, Importance: 30, Text: "thirty", Date: old}, // retention 30*1d: kept
+	}
+	stale := Stale(ms, 1, testUnit, now)
+	if len(stale) != 3 {
+		t.Fatalf("expected 3 stale memories, got %d: %+v", len(stale), stale)
+	}
+	for i, w := range []int{1, 2, 3} {
+		if stale[i].ID != w {
+			t.Fatalf("stale[%d].ID = %d, want %d (full: %+v)", i, stale[i].ID, w, stale)
+		}
+	}
+}
+
+// TestStaleLastUsedRefreshes verifies that retention is measured from LastUsed,
+// not Date: an ancient memory that recently reached the context is kept, while
+// a recent memory that never did is pruned.
+func TestStaleLastUsedRefreshes(t *testing.T) {
+	now := time.Now()
+	ancient := now.Add(-300 * 24 * time.Hour).Unix()
+	recent := now.Add(-2 * 24 * time.Hour).Unix()
+	ms := []storage.Memory{
+		// Created 300 days ago but used 1 day ago: retention 5*1d => kept.
+		{ID: 1, Importance: 5, Text: "ancient but used", Date: ancient, LastUsed: now.Add(-24 * time.Hour).Unix()},
+		// Created 2 days ago, never used since (LastUsed = Date): retention 1*1d => stale.
+		{ID: 2, Importance: 1, Text: "recent but unused", Date: recent},
+	}
+	// Put them on different days so Split treats them independently; tiny
+	// budget so both overflow. Same day would make id 2 "fresh".
+	stale := Stale(ms, 1, testUnit, now)
+	if len(stale) != 1 || stale[0].ID != 2 {
+		t.Fatalf("expected only id 2 stale (LastUsed-based), got %+v", stale)
+	}
+}
+
+// TestStaleBoundary verifies that a memory exactly at its retention threshold
+// is NOT stale (only strictly older memories are pruned).
 func TestStaleBoundary(t *testing.T) {
 	now := time.Now()
-	exactly := now.Add(-testMonth).Unix() // exactly maxAge ago (second precision)
+	exactly := now.Add(-5 * testUnit).Unix() // exactly importance*unit ago
 	ms := []storage.Memory{
-		{ID: 1, Importance: 1, Text: "boundary overflow", Date: exactly},
+		{ID: 1, Importance: 5, Text: "boundary overflow", Date: exactly},
 	}
-	// Doesn't fit (budget too small) but exactly maxAge old => not stale.
-	stale := Stale(ms, 1, testMonth, now)
+	// Doesn't fit (budget too small) but exactly at threshold => not stale.
+	stale := Stale(ms, 1, testUnit, now)
 	if len(stale) != 0 {
-		t.Fatalf("memory exactly maxAge old must not be stale, got %+v", stale)
+		t.Fatalf("memory exactly at threshold must not be stale, got %+v", stale)
 	}
 }
 
-// TestStaleJustOverBoundary verifies that a memory just over maxAge old that
-// also overflows IS stale.
+// TestStaleJustOverBoundary verifies that a memory just past its retention
+// threshold that also overflows IS stale.
 func TestStaleJustOverBoundary(t *testing.T) {
 	now := time.Now()
-	over := now.Add(-testMonth - time.Second).Unix() // one second past maxAge
+	over := now.Add(-5*testUnit - time.Second).Unix() // one second past threshold
 	ms := []storage.Memory{
-		{ID: 1, Importance: 1, Text: "just over overflow", Date: over},
+		{ID: 1, Importance: 5, Text: "just over overflow", Date: over},
 	}
-	stale := Stale(ms, 1, testMonth, now)
+	stale := Stale(ms, 1, testUnit, now)
 	if len(stale) != 1 || stale[0].ID != 1 {
-		t.Fatalf("memory just over maxAge + overflow must be stale, got %+v", stale)
+		t.Fatalf("memory just past threshold + overflow must be stale, got %+v", stale)
 	}
 }
 
-// TestStaleDisabled verifies that maxAge <= 0 disables pruning entirely, even
+// TestStaleDisabled verifies that ageUnit <= 0 disables pruning entirely, even
 // for ancient overflowing memories.
 func TestStaleDisabled(t *testing.T) {
 	now := time.Now()
@@ -419,13 +505,13 @@ func TestStaleDisabled(t *testing.T) {
 	}
 	stale := Stale(ms, 1, 0, now)
 	if len(stale) != 0 {
-		t.Fatalf("maxAge<=0 must disable pruning, got %+v", stale)
+		t.Fatalf("ageUnit<=0 must disable pruning, got %+v", stale)
 	}
 }
 
 // TestStaleEmpty verifies that an empty (or nil) input yields no stale memories.
 func TestStaleEmpty(t *testing.T) {
-	if stale := Stale(nil, 100, testMonth, time.Now()); len(stale) != 0 {
+	if stale := Stale(nil, 100, testUnit, time.Now()); len(stale) != 0 {
 		t.Fatalf("expected no stale for nil input, got %+v", stale)
 	}
 }

@@ -69,7 +69,9 @@ func (c *Config) applyDefaults() {
 		c.MemoriesCtxSize = 16384
 	}
 	if c.MemoriesMaxAge == 0 {
-		c.MemoriesMaxAge = 30 * 24 * 3600 // 30 days
+		// Retention unit per importance point: an out-of-context memory is
+		// pruned once it hasn't reached the context for importance*10 days.
+		c.MemoriesMaxAge = 10 * 24 * 3600 // 10 days
 	}
 	if c.SessionTimeout == 0 {
 		c.SessionTimeout = 3600
@@ -182,4 +184,3 @@ func stripComments(src string) string {
 	}
 	return b.String()
 }
-

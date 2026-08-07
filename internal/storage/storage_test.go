@@ -156,7 +156,8 @@ func TestLoadBackfillsMissingDate(t *testing.T) {
 		"user_description": "desc",
 		"memories": [
 			{"id": 1, "importance": 5, "text": "no date"},
-			{"id": 2, "importance": 3, "text": "has date", "date": 1000}
+			{"id": 2, "importance": 3, "text": "has date", "date": 1000},
+			{"id": 3, "importance": 7, "text": "has both", "date": 1000, "last_used": 2000}
 		]
 	}`
 	if err := os.WriteFile(filepath.Join(dir, "1.json"), []byte(raw), 0o644); err != nil {
@@ -175,5 +176,40 @@ func TestLoadBackfillsMissingDate(t *testing.T) {
 	// The explicit date is preserved.
 	if ud.Memories[1].Date != 1000 {
 		t.Fatalf("explicit date changed to %d, want 1000", ud.Memories[1].Date)
+	}
+	// Missing last_used is backfilled from the (backfilled) date.
+	if ud.Memories[0].LastUsed != ud.Memories[0].Date {
+		t.Fatalf("last_used = %d, want backfill from date %d", ud.Memories[0].LastUsed, ud.Memories[0].Date)
+	}
+	if ud.Memories[1].LastUsed != 1000 {
+		t.Fatalf("last_used = %d, want backfill from date 1000", ud.Memories[1].LastUsed)
+	}
+	// An explicit last_used is preserved.
+	if ud.Memories[2].LastUsed != 2000 {
+		t.Fatalf("explicit last_used changed to %d, want 2000", ud.Memories[2].LastUsed)
+	}
+}
+
+// TestTouchMemories verifies that TouchMemories stamps only the selected ids
+// and tolerates unknown ids and nil sets.
+func TestTouchMemories(t *testing.T) {
+	ud := &UserData{
+		UserDescription: "desc",
+		Memories: []Memory{
+			{ID: 1, Text: "one", Date: 100},
+			{ID: 2, Text: "two", Date: 100},
+		},
+	}
+	ud.TouchMemories(map[int]bool{2: true, 99: true}, 5000)
+	if ud.Memories[0].LastUsed != 0 {
+		t.Fatalf("untouched memory LastUsed = %d, want 0", ud.Memories[0].LastUsed)
+	}
+	if ud.Memories[1].LastUsed != 5000 {
+		t.Fatalf("touched memory LastUsed = %d, want 5000", ud.Memories[1].LastUsed)
+	}
+	// Nil set is a no-op.
+	ud.TouchMemories(nil, 9000)
+	if ud.Memories[1].LastUsed != 5000 {
+		t.Fatalf("nil ids must not change LastUsed, got %d", ud.Memories[1].LastUsed)
 	}
 }

@@ -580,14 +580,29 @@ func (a *App) extractAndClear(ctx context.Context, s *session) (int, error) {
 		log.Print("app", "added %d memories for user %d", added, s.userID)
 	}
 
+	// Stamp the memories selected into the context of the session that just
+	// ended: retention is measured from the last time a memory was actually
+	// used, so a memory that keeps reaching the context is never pruned.
+	pruneNow := time.Now()
+	if in, _ := memories.Split(data.Memories, a.cfg.MemoriesCtxSize); len(in) > 0 {
+		ids := make(map[int]bool, len(in))
+		for _, m := range in {
+			ids[m.ID] = true
+		}
+		data.TouchMemories(ids, pruneNow.Unix())
+	}
+
 	// Prune stale memories: those that did not fit into the context budget
-	// (memoriesCtxSize) and are older than memoriesMaxAge. This runs at every
-	// session end so the on-disk store does not grow without bound with
-	// low-value, ancient memories that never reach the context anyway.
-	// Memories that fit the budget are never pruned, so valid in-context
-	// memories are always retained.
+	// (memoriesCtxSize) and have not reached the context for longer than
+	// importance*memoriesMaxAge (by default 10 days per importance point, so
+	// an importance-1 memory is forgotten after 10 unused days while an
+	// importance-10 memory is kept for 100). This runs at every session end
+	// so the on-disk store does not grow without bound with low-value
+	// memories that never reach the context anyway. Memories that fit the
+	// budget are never pruned, so valid in-context memories are always
+	// retained.
 	maxAge := time.Duration(a.cfg.MemoriesMaxAge) * time.Second
-	stale := memories.Stale(data.Memories, a.cfg.MemoriesCtxSize, maxAge, time.Now())
+	stale := memories.Stale(data.Memories, a.cfg.MemoriesCtxSize, maxAge, pruneNow)
 	if len(stale) > 0 {
 		ids := make(map[int]bool, len(stale))
 		for _, m := range stale {
