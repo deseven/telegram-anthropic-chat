@@ -29,6 +29,36 @@ type Config struct {
 	WebhookSecretToken string `json:"webhookSecretToken"`
 	DumpRequestsPath   string `json:"dumpRequestsPath"`
 	TavilyAPIKey       string `json:"tavilyApiKey"`
+
+	// ImageGeneration enables the generate_image tool. Nil (the default)
+	// disables image generation entirely.
+	ImageGeneration *ImageGenerationConfig `json:"imageGeneration"`
+}
+
+// ImageGenerationConfig configures the OpenAI-compatible image generation
+// provider (POST {apiEndpoint}/v1/images/generations).
+type ImageGenerationConfig struct {
+	// APIKey is sent as a Bearer token when non-empty.
+	APIKey string `json:"apiKey"`
+	// APIEndpoint is the provider base URL, e.g. "https://api.openai.com"
+	// or "http://host:port/api"; "/v1/images/generations" is appended.
+	APIEndpoint string `json:"apiEndpoint"`
+	Model       string `json:"model"`
+	// Timeout is the per-request timeout in seconds (default 60).
+	Timeout int `json:"timeout"`
+	// DefaultWidth/DefaultHeight are used when the model omits a dimension
+	// (default 512).
+	DefaultWidth  int `json:"defaultWidth"`
+	DefaultHeight int `json:"defaultHeight"`
+	// MaxWidth/MaxHeight cap the dimensions the model may request (default 1024).
+	MaxWidth  int `json:"maxWidth"`
+	MaxHeight int `json:"maxHeight"`
+	// ResponseFormat, if set, is sent as response_format ("b64_json" or
+	// "url"). Omitted by default since some models reject the parameter.
+	ResponseFormat string `json:"responseFormat"`
+	// ExtraParams are merged into the request body (e.g. quality, style).
+	// The core fields (model, prompt, n, size) always take precedence.
+	ExtraParams map[string]any `json:"extraParams"`
 }
 
 // Load reads the JSONC config file at path, applies defaults and validates
@@ -91,6 +121,25 @@ func (c *Config) applyDefaults() {
 	// Normalize the public URL so handlers can append paths without
 	// worrying about a trailing slash.
 	c.HTTPPublicURL = strings.TrimRight(c.HTTPPublicURL, "/")
+
+	if ig := c.ImageGeneration; ig != nil {
+		ig.APIEndpoint = strings.TrimRight(strings.TrimSpace(ig.APIEndpoint), "/")
+		if ig.Timeout == 0 {
+			ig.Timeout = 60
+		}
+		if ig.DefaultWidth == 0 {
+			ig.DefaultWidth = 512
+		}
+		if ig.DefaultHeight == 0 {
+			ig.DefaultHeight = 512
+		}
+		if ig.MaxWidth == 0 {
+			ig.MaxWidth = 1024
+		}
+		if ig.MaxHeight == 0 {
+			ig.MaxHeight = 1024
+		}
+	}
 }
 
 func (c *Config) validate() error {
@@ -121,6 +170,23 @@ func (c *Config) validate() error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config fields: %s", strings.Join(missing, ", "))
+	}
+	if ig := c.ImageGeneration; ig != nil {
+		if ig.APIEndpoint == "" {
+			return fmt.Errorf("imageGeneration.apiEndpoint is required")
+		}
+		if ig.Model == "" {
+			return fmt.Errorf("imageGeneration.model is required")
+		}
+		if ig.Timeout < 0 || ig.DefaultWidth < 0 || ig.DefaultHeight < 0 || ig.MaxWidth < 0 || ig.MaxHeight < 0 {
+			return fmt.Errorf("imageGeneration timeout and sizes must be positive")
+		}
+		if ig.DefaultWidth > ig.MaxWidth || ig.DefaultHeight > ig.MaxHeight {
+			return fmt.Errorf("imageGeneration default size %dx%d exceeds max size %dx%d", ig.DefaultWidth, ig.DefaultHeight, ig.MaxWidth, ig.MaxHeight)
+		}
+		if ig.ResponseFormat != "" && ig.ResponseFormat != "b64_json" && ig.ResponseFormat != "url" {
+			return fmt.Errorf("imageGeneration.responseFormat must be 'b64_json' or 'url', got %q", ig.ResponseFormat)
+		}
 	}
 	return nil
 }

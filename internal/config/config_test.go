@@ -71,3 +71,57 @@ func TestLoadUnknownField(t *testing.T) {
 		t.Fatal("expected error for unknown field")
 	}
 }
+
+func loadSrc(t *testing.T, src string) (*Config, error) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.jsonc")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return Load(p)
+}
+
+func TestImageGenerationOptional(t *testing.T) {
+	c, err := loadSrc(t, `{"apiKey":"k","botToken":"t"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ImageGeneration != nil {
+		t.Fatalf("expected nil imageGeneration, got %+v", c.ImageGeneration)
+	}
+}
+
+func TestImageGenerationDefaults(t *testing.T) {
+	c, err := loadSrc(t, `{"apiKey":"k","botToken":"t","imageGeneration":{
+		"apiEndpoint":"http://10.66.66.2:13305/api/", // url with //
+		"model":"m"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ig := c.ImageGeneration
+	if ig == nil {
+		t.Fatal("imageGeneration is nil")
+	}
+	if ig.APIEndpoint != "http://10.66.66.2:13305/api" {
+		t.Fatalf("endpoint = %q", ig.APIEndpoint)
+	}
+	if ig.Timeout != 60 || ig.DefaultWidth != 512 || ig.DefaultHeight != 512 || ig.MaxWidth != 1024 || ig.MaxHeight != 1024 {
+		t.Fatalf("unexpected defaults: %+v", ig)
+	}
+}
+
+func TestImageGenerationValidation(t *testing.T) {
+	bad := map[string]string{
+		"no endpoint":   `{"model":"m"}`,
+		"no model":      `{"apiEndpoint":"http://x"}`,
+		"default > max": `{"apiEndpoint":"http://x","model":"m","defaultWidth":2048}`,
+		"bad format":    `{"apiEndpoint":"http://x","model":"m","responseFormat":"png"}`,
+		"unknown field": `{"apiEndpoint":"http://x","model":"m","bogus":1}`,
+		"negative":      `{"apiEndpoint":"http://x","model":"m","timeout":-1}`,
+	}
+	for name, ig := range bad {
+		if _, err := loadSrc(t, `{"apiKey":"k","botToken":"t","imageGeneration":`+ig+`}`); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}

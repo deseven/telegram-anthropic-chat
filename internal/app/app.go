@@ -3,13 +3,16 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -17,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zoo/telegram-anthropic-chat/internal/config"
+	"github.com/zoo/telegram-anthropic-chat/internal/imagegen"
 	"github.com/zoo/telegram-anthropic-chat/internal/images"
 	"github.com/zoo/telegram-anthropic-chat/internal/llm"
 	"github.com/zoo/telegram-anthropic-chat/internal/log"
@@ -24,7 +28,6 @@ import (
 	"github.com/zoo/telegram-anthropic-chat/internal/memories"
 	"github.com/zoo/telegram-anthropic-chat/internal/prompt"
 	"github.com/zoo/telegram-anthropic-chat/internal/storage"
-	"github.com/zoo/telegram-anthropic-chat/internal/tavily"
 )
 
 var httpClient = &http.Client{Timeout: 60 * time.Second}
@@ -45,11 +48,11 @@ const (
 
 // App holds all shared dependencies and per-user session state.
 type App struct {
-	cfg     *config.Config
-	store   *storage.Store
-	llm     *llm.Client
-	tgbot   *bot.Bot
-	tavily  *tavily.Client // nil when tavilyApiKey is not configured
+	cfg   *config.Config
+	store *storage.Store
+	llm   *llm.Client
+	tgbot *bot.Bot
+	tools llm.ToolExecutor // nil when no tools (web search, image generation) are configured
 
 	sysPromptTmpl          string
 	memoriesPromptTmpl     string
@@ -108,9 +111,9 @@ type incomingMsg struct {
 }
 
 // New constructs an App. Prompt templates are loaded and validated here.
-// tvClient may be nil when web search is not configured; in that case no
+// tools may be nil when no tool backend is configured; in that case no
 // tools are offered to the model.
-func New(cfg *config.Config, store *storage.Store, llmClient *llm.Client, tgbot *bot.Bot, tvClient *tavily.Client) (*App, error) {
+func New(cfg *config.Config, store *storage.Store, llmClient *llm.Client, tgbot *bot.Bot, tools llm.ToolExecutor) (*App, error) {
 	sysTmpl, err := prompt.Load(cfg.SystemPrompt)
 	if err != nil {
 		return nil, err
@@ -128,7 +131,7 @@ func New(cfg *config.Config, store *storage.Store, llmClient *llm.Client, tgbot 
 		store:                  store,
 		llm:                    llmClient,
 		tgbot:                  tgbot,
-		tavily:                 tvClient,
+		tools:                  tools,
 		sysPromptTmpl:          sysTmpl,
 		memoriesPromptTmpl:     memTmpl,
 		memoriesUserPromptTmpl: memUserTmpl,
@@ -137,9 +140,7 @@ func New(cfg *config.Config, store *storage.Store, llmClient *llm.Client, tgbot 
 		webCodes:               make(map[string]webAuthCode),
 		webTokens:              make(map[string]int64),
 	}
-	if tvClient != nil {
-		log.Print("app", "web search (Tavily) enabled")
-	}
+
 	go a.worker()
 	return a, nil
 }
@@ -322,7 +323,12 @@ func (a *App) handleBatch(batch []incomingMsg, s *session) {
 	// Send typing notifications every typingInterval until the LLM responds.
 	typingCtx, typingCancel := context.WithCancel(context.Background())
 	defer typingCancel()
-	go a.typingLoop(typingCtx, chatID)
+
+	// The chat action is "typing" by default and switches to "upload_photo"
+	// while an image is being generated.
+	var action atomic.Value
+	action.Store(models.ChatActionTyping)
+	go a.typingLoop(typingCtx, chatID, func() models.ChatAction { return action.Load().(models.ChatAction) })
 
 	log.Print("app", "sending LLM request for user %d (%d context messages)", s.userID, len(s.ctx))
 
@@ -345,7 +351,25 @@ func (a *App) handleBatch(batch []incomingMsg, s *session) {
 		a.sendMarkdown(context.Background(), chatID, text)
 	}
 
-	reply, err := a.llm.ChatWithTools(context.Background(), system, &s.ctx, a.tavily, true, onText)
+	// When a tool produces an image (generate_image), it is posted to the
+	// user right away and the turn ends with an empty reply.
+	callbacks := llm.Callbacks{
+		OnText: onText,
+		OnImage: func(img []byte) {
+			a.sendImage(context.Background(), chatID, img)
+		},
+		OnToolStart: func(name string) {
+			if name == imagegen.ToolName {
+				action.Store(models.ChatActionUploadPhoto)
+			}
+		},
+		OnToolEnd: func(name string) {
+			if name == imagegen.ToolName {
+				action.Store(models.ChatActionTyping)
+			}
+		},
+	}
+	reply, err := a.llm.ChatWithTools(context.Background(), system, &s.ctx, a.tools, true, callbacks)
 	typingCancel()
 	if err != nil {
 		log.Print("app", "LLM request failed for %d: %v", s.userID, err)
@@ -360,27 +384,32 @@ func (a *App) handleBatch(batch []incomingMsg, s *session) {
 	}
 }
 
-// typingLoop sends the "typing" chat action to Telegram every typingInterval
-// until ctx is cancelled (i.e. the LLM response arrives or the request fails).
-func (a *App) typingLoop(ctx context.Context, chatID int64) {
+// typingLoop sends the current chat action (normally "typing") to Telegram
+// every typingInterval until ctx is cancelled (i.e. the LLM response arrives
+// or the request fails). action is re-read on every tick.
+func (a *App) typingLoop(ctx context.Context, chatID int64, action func() models.ChatAction) {
 	ticker := time.NewTicker(typingInterval)
 	defer ticker.Stop()
 	// Send immediately so the indicator appears without waiting for the first tick.
-	a.sendTyping(ctx, chatID)
+	a.sendChatAction(ctx, chatID, action())
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			a.sendTyping(ctx, chatID)
+			a.sendChatAction(ctx, chatID, action())
 		}
 	}
 }
 
 func (a *App) sendTyping(ctx context.Context, chatID int64) {
+	a.sendChatAction(ctx, chatID, models.ChatActionTyping)
+}
+
+func (a *App) sendChatAction(ctx context.Context, chatID int64, action models.ChatAction) {
 	_, err := a.tgbot.SendChatAction(ctx, &bot.SendChatActionParams{
 		ChatID: chatID,
-		Action: models.ChatActionTyping,
+		Action: action,
 	})
 	// A "context canceled" error here is expected and benign: typingCancel()
 	// fires the moment the LLM response arrives, which can abort an in-flight
@@ -708,6 +737,34 @@ func (a *App) sendMarkdown(ctx context.Context, chatID int64, text string) {
 			}
 			return
 		}
+	}
+}
+
+// sendImage posts a generated image to the chat exactly as the provider
+// returned it. If Telegram rejects it as a photo (e.g. size limits), it is
+// retried as a document so the user still receives the original.
+func (a *App) sendImage(ctx context.Context, chatID int64, raw []byte) {
+	ext := "png"
+	if _, format, err := image.DecodeConfig(bytes.NewReader(raw)); err == nil {
+		ext = format
+	}
+	filename := "image." + ext
+
+	_, err := a.tgbot.SendPhoto(ctx, &bot.SendPhotoParams{
+		ChatID: chatID,
+		Photo:  &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(raw)},
+	})
+	if err == nil {
+		return
+	}
+	log.Print("app", "send photo to %d failed: %v, retrying as document", chatID, err)
+	_, err = a.tgbot.SendDocument(ctx, &bot.SendDocumentParams{
+		ChatID:   chatID,
+		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(raw)},
+	})
+	if err != nil {
+		log.Print("app", "send document to %d failed: %v", chatID, err)
+		a.sendText(ctx, chatID, "I generated an image but couldn't deliver it to Telegram.")
 	}
 }
 

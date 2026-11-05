@@ -18,9 +18,8 @@ future contexts.
   the remaining budget is filled with older memories ranked by importance
   (and recency within the same importance).
 - Web search / URL extraction via Tavily tool calling (optional).
-- Image handling: photos over 1024px are resized, re-encoded as JPEG @ 85%,
-  base64-encoded and sent to Anthropic. Forwarded messages are attributed to
-  their original author; unsupported attachments become text placeholders.
+- Image input.
+- Image generation via an OpenAI-compatible `/v1/images/generations` providers.
 - Replies are converted to Telegram MarkdownV2 and split when too long.
 - Polling or webhook update methods.
 - Web interface for managing memories in the browser (add / edit / delete),
@@ -76,6 +75,25 @@ Copy `config.jsonc.example` to `config.jsonc` and fill it in.
 | `webhookSecretToken` | no       |                              | Telegram webhook secret token |
 | `dumpRequestsPath`   | no       |                              | File to dump Anthropic requests/responses (truncated on start) |
 | `tavilyApiKey`       | no       |                              | Tavily API key; enables `web_search` and `extract_url` tools |
+| `imageGeneration`    | no       |                              | Object enabling the `generate_image` tool; see below |
+
+### `imageGeneration`
+
+Optional object; image generation is disabled when it is absent.
+
+| Field            | Required | Default | Description |
+|------------------|----------|---------|-------------|
+| `apiEndpoint`    | yes      |         | Provider base URL; `/v1/images/generations` is appended (e.g. `https://api.openai.com`, `http://host:13305/api`) |
+| `model`          | yes      |         | Image model name |
+| `apiKey`         | no       |         | Sent as `Authorization: Bearer`; omitted when empty |
+| `timeout`        | no       | `60`    | Seconds for the whole generation request (including downloading the image if the provider returns a URL) |
+| `defaultWidth` / `defaultHeight` | no | `512` | Size used when the model doesn't specify one |
+| `maxWidth` / `maxHeight` | no | `1024` | Largest size the model may request (larger requests are rejected with an error to the model) |
+| `responseFormat` | no       |         | `b64_json` or `url`, sent as `response_format`. Omitted by default because some models reject it; both response kinds are handled |
+| `extraParams`    | no       |         | Object merged into the request body (e.g. `{"quality": "low"}`); `model`, `prompt`, `n` and `size` always win |
+
+Sizes the provider doesn't support are not validated by the bot: the provider's
+error is returned to the model, which can adjust and retry.
 
 ## Adding a user
 

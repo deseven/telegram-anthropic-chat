@@ -20,6 +20,8 @@ import (
 	_ "image/gif"
 
 	"golang.org/x/image/draw"
+	// Register WebP decoding (some image generation providers return WebP).
+	_ "golang.org/x/image/webp"
 )
 
 const maxDim = 1024

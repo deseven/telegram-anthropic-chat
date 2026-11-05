@@ -62,5 +62,42 @@
   // default: empty). When set, the bot offers the model two tools —
   // web_search and extract_url — which it can use to look up current
   // information. When empty, tool calling is disabled entirely.
-  "tavilyApiKey": ""
+  "tavilyApiKey": "",
+
+  // Image generation via an OpenAI-compatible provider (optional). When this
+  // object is present, the model is offered a generate_image tool. A generated
+  // image is posted to Telegram right away and also returned to the model as
+  // the tool result; errors (provider down, unsupported size, timeout) are
+  // returned to the model.
+  // Remove the whole object to disable image generation.
+  "imageGeneration": {
+    // Provider base URL; "/v1/images/generations" is appended (required)
+    "apiEndpoint": "https://api.openai.com",
+
+    // Image model name (required)
+    "model": "gpt-image-1",
+
+    // Sent as "Authorization: Bearer ..."; leave empty if no auth is needed (optional)
+    "apiKey": "",
+
+    // Timeout in seconds for the whole generation request (optional, default: 60)
+    "timeout": 60,
+
+    // Size used when the model doesn't specify one (optional, default: 512x512)
+    "defaultWidth": 512,
+    "defaultHeight": 512,
+
+    // Largest size the model may request (optional, default: 1024x1024)
+    "maxWidth": 1024,
+    "maxHeight": 1024,
+
+    // "b64_json" or "url", sent as response_format (optional, default: not sent;
+    // some models, e.g. gpt-image-1, reject the parameter). Both kinds of
+    // response are handled either way.
+    "responseFormat": "",
+
+    // Extra fields merged into the request body, e.g. {"quality": "low"}
+    // (optional). model, prompt, n and size always take precedence.
+    "extraParams": {}
+  }
 }

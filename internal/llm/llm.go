@@ -35,16 +35,97 @@ type Client struct {
 // requesting tools.
 const maxToolIterations = 10
 
+// ToolResult is the outcome of a single tool call.
+type ToolResult struct {
+	// Text is fed back to the model as the tool_result text (typically JSON
+	// or a human-readable message).
+	Text string
+	// IsError marks the tool_result as an error so the model can react to it.
+	IsError bool
+	// ImageB64 is an optional base64 JPEG attached to the tool_result so the
+	// model (and later turns) can see it. It is stored in the context.
+	ImageB64 string
+	// Image is the optional original image to deliver to the user as-is via
+	// Callbacks.OnImage. It is never stored in the context.
+	Image []byte
+}
+
 // ToolExecutor provides the tools offered to the model and executes the tool
-// calls the model makes. It is implemented by tool backends such as the
-// Tavily web-search client.
+// calls the model makes.
 type ToolExecutor interface {
 	// Tools returns the Anthropic tool definitions to include in the request.
 	Tools() []anthropic.ToolUnionParam
 	// Execute runs the named tool with the given raw JSON input and returns
-	// the result as a string (typically JSON) to feed back to the model as a
-	// tool_result.
+	// the result to feed back to the model as a tool_result.
+	Execute(ctx context.Context, name string, input json.RawMessage) ToolResult
+}
+
+// TextToolExecutor is a simpler ToolExecutor whose tools only return text
+// (e.g. the Tavily web-search client). Wrap it with AdaptTextTools.
+type TextToolExecutor interface {
+	Tools() []anthropic.ToolUnionParam
 	Execute(ctx context.Context, name string, input json.RawMessage) string
+}
+
+type textToolAdapter struct{ TextToolExecutor }
+
+func (a textToolAdapter) Execute(ctx context.Context, name string, input json.RawMessage) ToolResult {
+	return ToolResult{Text: a.TextToolExecutor.Execute(ctx, name, input)}
+}
+
+// AdaptTextTools adapts a text-only tool backend to ToolExecutor.
+func AdaptTextTools(t TextToolExecutor) ToolExecutor { return textToolAdapter{t} }
+
+// toolSet combines several ToolExecutors into one, routing calls by tool name.
+type toolSet struct {
+	defs   []anthropic.ToolUnionParam
+	byName map[string]ToolExecutor
+}
+
+// NewToolSet combines the given executors (nil entries are ignored). It
+// returns a nil ToolExecutor when there is nothing to offer, so callers can
+// pass the result straight to ChatWithTools to disable tool calling.
+func NewToolSet(execs ...ToolExecutor) ToolExecutor {
+	ts := &toolSet{byName: map[string]ToolExecutor{}}
+	for _, e := range execs {
+		if e == nil {
+			continue
+		}
+		for _, def := range e.Tools() {
+			if def.OfTool == nil {
+				continue
+			}
+			ts.defs = append(ts.defs, def)
+			ts.byName[def.OfTool.Name] = e
+		}
+	}
+	if len(ts.defs) == 0 {
+		return nil
+	}
+	return ts
+}
+
+func (ts *toolSet) Tools() []anthropic.ToolUnionParam { return ts.defs }
+
+func (ts *toolSet) Execute(ctx context.Context, name string, input json.RawMessage) ToolResult {
+	e, ok := ts.byName[name]
+	if !ok {
+		return ToolResult{Text: fmt.Sprintf("unknown tool: %s", name), IsError: true}
+	}
+	return e.Execute(ctx, name, input)
+}
+
+// Callbacks are optional hooks invoked by ChatWithTools while it runs.
+type Callbacks struct {
+	// OnText receives intermediate text the model emits before a tool call
+	// (e.g. "Let me look that up") so it can be forwarded to the user.
+	OnText func(text string)
+	// OnImage receives the original image of a successful tool call that
+	// produced one (ToolResult.Image), to be delivered to the user.
+	OnImage func(image []byte)
+	// OnToolStart / OnToolEnd bracket every tool execution.
+	OnToolStart func(name string)
+	OnToolEnd   func(name string)
 }
 
 // New creates a Client using the given API key, model and maxTokens. If
@@ -71,14 +152,18 @@ func New(apiKey, model string, maxTokens int, dumpRequestsPath string) (*Client,
 // ToolResultID for a tool_result block, ImageB64 for an image, Text for
 // text).
 type ContentBlock struct {
-	Text         string          // plain text content
-	ImageB64     string          // base64-encoded JPEG (without data: prefix)
-	ToolUseID    string          // tool_use: id assigned by the model
-	ToolUseName  string          // tool_use: tool name
-	ToolUseInput json.RawMessage // tool_use: raw JSON input
-	ToolResultID   string        // tool_result: id of the tool_use it answers
-	ToolResultText string        // tool_result: result content
-	ToolResultErr  bool          // tool_result: whether the result is an error
+	Text           string          // plain text content
+	ImageB64       string          // base64-encoded JPEG (without data: prefix)
+	ToolUseID      string          // tool_use: id assigned by the model
+	ToolUseName    string          // tool_use: tool name
+	ToolUseInput   json.RawMessage // tool_use: raw JSON input
+	ToolResultID   string          // tool_result: id of the tool_use it answers
+	ToolResultText string          // tool_result: result content
+	ToolResultErr  bool            // tool_result: whether the result is an error
+
+	// ToolResultImageB64 is an optional base64 JPEG attached to the
+	// tool_result (e.g. an image the assistant generated).
+	ToolResultImageB64 string
 }
 
 // IsToolUse reports whether the block represents a tool_use.
@@ -100,7 +185,7 @@ type Message struct {
 // for one-shot calls (e.g. memory extraction) that have no reusable prefix
 // across requests, so caching would only add cost without hits.
 func (c *Client) Chat(ctx context.Context, system string, msgsPtr *[]Message) (string, error) {
-	return c.ChatWithTools(ctx, system, msgsPtr, nil, false)
+	return c.ChatWithTools(ctx, system, msgsPtr, nil, false, Callbacks{})
 }
 
 // ChatWithTools is like Chat but, when tools is non-nil, offers the given
@@ -112,11 +197,16 @@ func (c *Client) Chat(ctx context.Context, system string, msgsPtr *[]Message) (s
 // tool-calling flow for future turns. The final (non-tool) assistant turn is
 // also appended, so the caller does not need to append it separately.
 //
-// The onText callback (if non-nil) is invoked with intermediate text the
+// The cb.OnText callback (if non-nil) is invoked with intermediate text the
 // model emits before a tool call (e.g. "Let me look that up") so the caller
 // can forward it to the user immediately. The final turn's text is returned
 // as the result string (and is NOT forwarded via the callback), so the
 // caller sends it exactly once.
+//
+// If a tool returns an image (ToolResult.Image), cb.OnImage is invoked with
+// it right away so the caller can deliver it to the user, while the processed
+// copy (ToolResult.ImageB64) goes back to the model in the tool_result and the
+// loop continues as usual.
 //
 // If cache is true, automatic prompt caching is enabled with a 1-hour TTL:
 // a top-level cache_control breakpoint is placed on the last cacheable block
@@ -130,11 +220,8 @@ func (c *Client) Chat(ctx context.Context, system string, msgsPtr *[]Message) (s
 //
 // If tools is nil, the call behaves exactly like Chat (no tool loop, no
 // callback), and the single assistant turn is appended to *msgsPtr.
-func (c *Client) ChatWithTools(ctx context.Context, system string, msgsPtr *[]Message, tools ToolExecutor, cache bool, onText ...func(string)) (string, error) {
-	var textCb func(string)
-	if len(onText) > 0 {
-		textCb = onText[0]
-	}
+func (c *Client) ChatWithTools(ctx context.Context, system string, msgsPtr *[]Message, tools ToolExecutor, cache bool, cb Callbacks) (string, error) {
+	textCb := cb.OnText
 
 	toolDefs := []anthropic.ToolUnionParam(nil)
 	if tools != nil {
@@ -258,11 +345,25 @@ func (c *Client) ChatWithTools(ctx context.Context, system string, msgsPtr *[]Me
 		}
 
 		for _, tu := range toolUses {
-			result := tools.Execute(ctx, tu.Name, tu.Input)
-			resultBlocks = append(resultBlocks, ContentBlock{
+			if cb.OnToolStart != nil {
+				cb.OnToolStart(tu.Name)
+			}
+			res := tools.Execute(ctx, tu.Name, tu.Input)
+			if cb.OnToolEnd != nil {
+				cb.OnToolEnd(tu.Name)
+			}
+			block := ContentBlock{
 				ToolResultID:   tu.ID,
-				ToolResultText: result,
-			})
+				ToolResultText: res.Text,
+				ToolResultErr:  res.IsError,
+			}
+			if !res.IsError {
+				block.ToolResultImageB64 = res.ImageB64
+				if len(res.Image) > 0 && cb.OnImage != nil {
+					cb.OnImage(res.Image)
+				}
+			}
+			resultBlocks = append(resultBlocks, block)
 		}
 		*msgsPtr = append(*msgsPtr, Message{Role: "user", Blocks: resultBlocks})
 	}
@@ -333,6 +434,8 @@ func SerializeHistory(msgs []Message) string {
 			case blk.IsToolResult():
 				if blk.ToolResultErr {
 					b.WriteString("[tool call failed]")
+				} else if blk.ToolResultImageB64 != "" {
+					b.WriteString("[image generated by you]")
 				} else {
 					b.WriteString("[tool call completed]")
 				}
@@ -376,7 +479,7 @@ func toParams(msgs []Message) []anthropic.MessageParam {
 				}
 				blocks = append(blocks, anthropic.NewToolUseBlock(b.ToolUseID, input, b.ToolUseName))
 			case b.IsToolResult():
-				blocks = append(blocks, anthropic.NewToolResultBlock(b.ToolResultID, b.ToolResultText, b.ToolResultErr))
+				blocks = append(blocks, toolResultParam(b))
 			case b.ImageB64 != "":
 				blocks = append(blocks, anthropic.NewImageBlockBase64("image/jpeg", b.ImageB64))
 			case b.Text != "":
@@ -390,12 +493,42 @@ func toParams(msgs []Message) []anthropic.MessageParam {
 		if m.Role == "assistant" {
 			role = anthropic.MessageParamRoleAssistant
 		}
+
 		out = append(out, anthropic.MessageParam{
 			Role:    role,
 			Content: blocks,
 		})
 	}
 	return out
+}
+
+// toolResultParam builds a tool_result block, attaching the image (if any)
+// after the text so the model can see it.
+func toolResultParam(b ContentBlock) anthropic.ContentBlockParamUnion {
+	if b.ToolResultImageB64 == "" {
+		return anthropic.NewToolResultBlock(b.ToolResultID, b.ToolResultText, b.ToolResultErr)
+	}
+	content := make([]anthropic.ToolResultBlockParamContentUnion, 0, 2)
+	if b.ToolResultText != "" {
+		content = append(content, anthropic.ToolResultBlockParamContentUnion{
+			OfText: &anthropic.TextBlockParam{Text: b.ToolResultText},
+		})
+	}
+	content = append(content, anthropic.ToolResultBlockParamContentUnion{
+		OfImage: &anthropic.ImageBlockParam{
+			Source: anthropic.ImageBlockParamSourceUnion{
+				OfBase64: &anthropic.Base64ImageSourceParam{
+					Data:      b.ToolResultImageB64,
+					MediaType: anthropic.Base64ImageSourceMediaTypeImageJPEG,
+				},
+			},
+		},
+	})
+	return anthropic.ContentBlockParamUnion{OfToolResult: &anthropic.ToolResultBlockParam{
+		ToolUseID: b.ToolResultID,
+		Content:   content,
+		IsError:   anthropic.Bool(b.ToolResultErr),
+	}}
 }
 
 // stripJSONFences removes markdown code fences (``` or ```json) that a model
@@ -632,11 +765,24 @@ func redactImageData(v any) {
 			if !ok {
 				continue
 			}
-			if src, ok := block["source"].(map[string]any); ok {
-				if _, hasData := src["data"]; hasData {
-					src["data"] = "image_data"
+			redactSourceData(block)
+			// Images nested inside tool_result content.
+			if nested, ok := block["content"].([]any); ok {
+				for _, n := range nested {
+					if nb, ok := n.(map[string]any); ok {
+						redactSourceData(nb)
+					}
 				}
 			}
+		}
+	}
+}
+
+// redactSourceData replaces block.source.data with "image_data", if present.
+func redactSourceData(block map[string]any) {
+	if src, ok := block["source"].(map[string]any); ok {
+		if _, hasData := src["data"]; hasData {
+			src["data"] = "image_data"
 		}
 	}
 }

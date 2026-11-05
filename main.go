@@ -15,6 +15,7 @@ import (
 
 	"github.com/zoo/telegram-anthropic-chat/internal/app"
 	"github.com/zoo/telegram-anthropic-chat/internal/config"
+	"github.com/zoo/telegram-anthropic-chat/internal/imagegen"
 	"github.com/zoo/telegram-anthropic-chat/internal/llm"
 	"github.com/zoo/telegram-anthropic-chat/internal/log"
 	"github.com/zoo/telegram-anthropic-chat/internal/storage"
@@ -46,11 +47,19 @@ func main() {
 		log.Print("main", "dumping Anthropic requests to %s", cfg.DumpRequestsPath)
 	}
 
-	// Web search (Tavily) is optional: only enabled when tavilyApiKey is set.
-	var tvClient *tavily.Client
+	// Tools are optional. Web search (Tavily) is enabled when tavilyApiKey is
+	// set, image generation when the imageGeneration object is present. With
+	// neither, tools is nil and tool calling is disabled entirely.
+	var toolBackends []llm.ToolExecutor
 	if cfg.TavilyAPIKey != "" {
-		tvClient = tavily.New(cfg.TavilyAPIKey)
+		toolBackends = append(toolBackends, llm.AdaptTextTools(tavily.New(cfg.TavilyAPIKey)))
+		log.Print("main", "web search (Tavily) enabled")
 	}
+	if cfg.ImageGeneration != nil {
+		toolBackends = append(toolBackends, imagegen.New(cfg.ImageGeneration))
+		log.Print("main", "image generation enabled (model %s at %s)", cfg.ImageGeneration.Model, cfg.ImageGeneration.APIEndpoint)
+	}
+	tools := llm.NewToolSet(toolBackends...)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -77,7 +86,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	application, err := app.New(cfg, store, llmClient, tgbot, tvClient)
+	application, err := app.New(cfg, store, llmClient, tgbot, tools)
 	if err != nil {
 		log.Print("main", "app init failed: %v", err)
 		os.Exit(1)
